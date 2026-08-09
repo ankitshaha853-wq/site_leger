@@ -162,6 +162,7 @@ h1,h2,h3{margin:0;}
       <button class="tab-btn" data-tab="suppliers" onclick="switchTab('suppliers')">👥 सप्लायर्स</button>
       <button class="tab-btn" data-tab="add" onclick="switchTab('add')">＋ नोंद करा</button>
       <button class="tab-btn" data-tab="stock" onclick="switchTab('stock')">📦 स्टॉक</button>
+      <button class="tab-btn" data-tab="sales" onclick="switchTab('sales')">🏠 विक्री</button>
       <button class="tab-btn" data-tab="setup" onclick="switchTab('setup')">⚙ सेटअप</button>
     </div>
   </div>
@@ -177,12 +178,26 @@ h1,h2,h3{margin:0;}
 const SUPABASE_URL = "https://yxexwqdihekuehaepkoi.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4ZXh3cWRpaGVrdWVoYWVwa29pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyMDkwNzgsImV4cCI6MjEwMTc4NTA3OH0.W-pV3PhF6dq0DFCtSdENpX6mDd6OSn5l3c3fum0oF68";
 
-async function sb(path, { method = "GET", body, token } = {}) {
+async function sb(path, { method = "GET", body, token } = {}, _retried) {
   const headers = { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" };
   headers.Authorization = "Bearer " + (token || SUPABASE_ANON_KEY);
   if (body !== undefined) headers.Prefer = "return=representation";
   const res = await fetch(SUPABASE_URL + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   if (!res.ok) {
+    // टोकन एक्सपायर झालं असेल (401) तर आपोआप रिफ्रेश करून एकदा परत प्रयत्न करा
+    if (res.status === 401 && !_retried && token && state.session && state.session.refresh_token) {
+      try {
+        const fresh = await apiRefresh(state.session.refresh_token);
+        if (fresh && fresh.access_token) {
+          state.session = fresh;
+          lsSet("ledger_refresh_token", fresh.refresh_token);
+          return sb(path, { method, body, token: fresh.access_token }, true);
+        }
+      } catch (e) {}
+      // रिफ्रेश अयशस्वी झालं तर सेशन संपलंय — परत लॉगिन करावं लागेल
+      logout();
+      showToast("सेशन एक्सपायर झालं, परत लॉगिन करा");
+    }
     let msg = res.statusText;
     try { const j = await res.json(); msg = j.error_description || j.msg || j.message || msg; } catch (e) {}
     throw new Error(msg);
@@ -298,7 +313,7 @@ const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({ "&":"&amp;","<"
 /* ================= App state ================= */
 const state = {
   session: null, authMode: "login",
-  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [],
+  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [], units: [], customers: [], receipts: [],
   tab: "dashboard", activeSiteId: null, activeSupplierId: null,
   charts: {},
 };
@@ -372,6 +387,9 @@ function logout(){
 /* ================= Data mapping ================= */
 function mapSite(r){ return { id:r.id, name:r.name, location:r.location, budget: r.budget!=null ? Number(r.budget) : null }; }
 function mapAdvance(r){ return { id:r.id, supplierId:r.supplier_id, siteId:r.site_id, amount:Number(r.amount||0), date:r.adv_date, mode:r.mode, note:r.note||"" }; }
+function mapUnit(r){ return { id:r.id, siteId:r.site_id, unitNo:r.unit_no, unitType:r.unit_type, area:r.area_sqft!=null?Number(r.area_sqft):null, price:r.price!=null?Number(r.price):null, status:r.status }; }
+function mapCustomer(r){ return { id:r.id, unitId:r.unit_id, name:r.name, contact:r.contact, email:r.email, bookingDate:r.booking_date, agreementValue:Number(r.agreement_value||0), note:r.note||"" }; }
+function mapReceipt(r){ return { id:r.id, customerId:r.customer_id, amount:Number(r.amount||0), date:r.receipt_date, mode:r.mode, note:r.note||"" }; }
 function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin }; }
 function mapTxn(r, profMap){
   return {
@@ -383,20 +401,23 @@ function mapTxn(r, profMap){
   };
 }
 function mapUsage(r){
-  return { id:r.id, siteId:r.site_id, itemName:r.item_name, quantity:Number(r.quantity||0), unit:r.unit||"", date:r.usage_date, note:r.note||"" };
+  return { id:r.id, siteId:r.site_id, itemName:r.item_name, quantity:Number(r.quantity||0), unit:r.unit||"", date:r.usage_date, note:r.note||"", value: r.value!=null ? Number(r.value) : null };
 }
 
 /* ================= Data load / CRUD ================= */
 async function loadAll(){
   const token = state.session.access_token;
   try {
-    const [s, sup, t, profRows, use, adv] = await Promise.all([
+    const [s, sup, t, profRows, use, adv, u, cust, rcpt] = await Promise.all([
       sb("/rest/v1/sites?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/suppliers?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/transactions?select=*&order=txn_date.desc", {token}),
       sb("/rest/v1/profiles?select=id,full_name", {token}),
       sb("/rest/v1/material_usage?select=*&order=usage_date.desc", {token}).catch(()=>[]),
       sb("/rest/v1/advances?select=*&order=adv_date.desc", {token}).catch(()=>[]),
+      sb("/rest/v1/units?select=*&order=created_at.asc", {token}).catch(()=>[]),
+      sb("/rest/v1/customers?select=*&order=created_at.desc", {token}).catch(()=>[]),
+      sb("/rest/v1/receipts?select=*&order=receipt_date.desc", {token}).catch(()=>[]),
     ]);
     const profMap = {}; (profRows||[]).forEach(p=>{ profMap[p.id]=p.full_name; });
     state.profiles = profMap;
@@ -405,6 +426,9 @@ async function loadAll(){
     state.txns = (t||[]).map(r=>mapTxn(r, profMap));
     state.usage = (use||[]).map(mapUsage);
     state.advances = (adv||[]).map(mapAdvance);
+    state.units = (u||[]).map(mapUnit);
+    state.customers = (cust||[]).map(mapCustomer);
+    state.receipts = (rcpt||[]).map(mapReceipt);
     document.getElementById("meName").textContent = "👤 " + ((state.session.user.user_metadata||{}).full_name || state.session.user.email);
   } catch(e) { showToast("डेटा लोड करताना त्रुटी: " + e.message); }
 }
@@ -431,6 +455,50 @@ async function deleteAdvance(id){
     state.advances = state.advances.filter(a=>a.id!==id);
     rerenderCurrentTab();
   } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addUnit(u){
+  try {
+    const body = [{ site_id:u.siteId, unit_no:u.unitNo.trim(), unit_type:u.unitType||null, area_sqft:u.area?Number(u.area):null, price:u.price?Number(u.price):null, status:"available" }];
+    const rows = await sb("/rest/v1/units", {method:"POST", token:state.session.access_token, body});
+    state.units.push(mapUnit(rows[0]));
+    showToast("युनिट जोडलं"); renderSales();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function deleteUnit(id){
+  try { await sb("/rest/v1/units?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.units=state.units.filter(u=>u.id!==id); renderSales(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function setUnitStatus(id, status){
+  try {
+    await sb("/rest/v1/units?id=eq."+id, {method:"PATCH", token:state.session.access_token, body:{status}});
+    const u = state.units.find(x=>x.id===id); if (u) u.status = status;
+    renderSales();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addCustomer(c){
+  try {
+    const body = [{ unit_id:c.unitId||null, name:c.name.trim(), contact:c.contact||null, email:c.email||null, booking_date:c.bookingDate||null, agreement_value:Number(c.agreementValue), note:c.note||null }];
+    const rows = await sb("/rest/v1/customers", {method:"POST", token:state.session.access_token, body});
+    state.customers.unshift(mapCustomer(rows[0]));
+    if (c.unitId) { await setUnitStatus(c.unitId, "booked"); }
+    showToast("कस्टमर जोडला"); renderSales();
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteCustomer(id){
+  try { await sb("/rest/v1/customers?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.customers=state.customers.filter(c=>c.id!==id); renderSales(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addReceipt(r){
+  try {
+    const body = [{ customer_id:r.customerId, amount:Number(r.amount), receipt_date:r.date, mode:r.mode, note:r.note||null, created_by: state.session.user.id }];
+    const rows = await sb("/rest/v1/receipts", {method:"POST", token:state.session.access_token, body});
+    state.receipts.unshift(mapReceipt(rows[0]));
+    showToast("पावती नोंदवली"); renderSales();
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteReceipt(id){
+  try { await sb("/rest/v1/receipts?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.receipts=state.receipts.filter(r=>r.id!==id); renderSales(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
 }
 async function addSupplier(name, category, contact, gstin){
   if (!name.trim()) return;
@@ -472,7 +540,7 @@ async function markPaid(id){
 }
 async function addUsage(u){
   try {
-    const body = [{ site_id:u.siteId, item_name:u.itemName.trim(), quantity:Number(u.quantity), unit:u.unit||null, usage_date:u.date, note:u.note||null, created_by: state.session.user.id }];
+    const body = [{ site_id:u.siteId, item_name:u.itemName.trim(), quantity:Number(u.quantity), unit:u.unit||null, usage_date:u.date, note:u.note||null, value: u.value ? Number(u.value) : null, created_by: state.session.user.id }];
     const rows = await sb("/rest/v1/material_usage", {method:"POST", token:state.session.access_token, body});
     state.usage.unshift(mapUsage(rows[0]));
     showToast("वापर नोंदवला");
@@ -511,7 +579,8 @@ function computeTotals(){
   const perSite = state.sites.map(s=>({ site:s, amount: state.txns.filter(t=>t.siteId===s.id).reduce((a,t)=>a+amt(t),0), count: state.txns.filter(t=>t.siteId===s.id).length }));
   const perSupplier = state.suppliers.map(s=>({ supplier:s, amount: state.txns.filter(t=>t.supplierId===s.id).reduce((a,t)=>a+amt(t),0), count: state.txns.filter(t=>t.supplierId===s.id).length })).sort((a,b)=>b.amount-a.amount);
   const perCategory = CATS.map(c=>({ name:c, value: state.txns.filter(t=>t.category===c).reduce((a,t)=>a+amt(t),0) })).filter(c=>c.value>0);
-  return { total, totalGst, pending, cash, bank, perSite, perSupplier, perCategory };
+  const directExpense = state.txns.filter(t=>!t.supplierId).reduce((a,t)=>a+amt(t),0);
+  return { total, totalGst, pending, cash, bank, perSite, perSupplier, perCategory, directExpense };
 }
 
 /* ================= Tabs / router ================= */
@@ -526,6 +595,7 @@ function rerenderCurrentTab(){
   else if (state.tab==="suppliers") state.activeSupplierId ? renderSupplierDetail(state.activeSupplierId) : renderSuppliers();
   else if (state.tab==="add") renderAddEntry();
   else if (state.tab==="stock") renderStock();
+  else if (state.tab==="sales") renderSales();
   else if (state.tab==="setup") renderSetup();
 }
 function openSite(id){ state.activeSiteId = id; filterState.from=""; filterState.to=""; filterState.category=""; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab==="sites")); state.tab="sites"; renderSiteDetail(id); }
@@ -597,6 +667,7 @@ function renderDashboard(){
     + statCard("रोख खर्च", inr(totals.cash), "--steel", "💵")
     + statCard("बँक/UPI/चेक", inr(totals.bank), "--green", "🏦")
     + statCard("साईट्स / सप्लायर्स", state.sites.length + " / " + state.suppliers.length, "--steel", "🏗")
+    + statCard("थेट खर्च (मजुरी/इतर)", inr(totals.directExpense), "--steel", "🧾")
     + '</div>';
 
   if (state.sites.length===0 || state.suppliers.length===0){
@@ -669,14 +740,15 @@ function renderSiteDetail(siteId){
   const allSiteTxns = state.txns.filter(t=>t.siteId===site.id);
   const siteTxns = applyFilter(allSiteTxns).sort((a,b)=> a.date<b.date?1:-1);
   const bySupplier = {};
-  siteTxns.forEach(t=>{ bySupplier[t.supplierId] = (bySupplier[t.supplierId]||0) + t.totalAmount; });
+  siteTxns.forEach(t=>{ const key = t.supplierId || "_direct"; bySupplier[key] = (bySupplier[key]||0) + t.totalAmount; });
   const total = siteTxns.reduce((a,t)=>a+t.totalAmount,0);
   const actualTotal = allSiteTxns.reduce((a,t)=>a+t.totalAmount,0); // budget vs actual नेहमी फिल्टरशिवाय संपूर्ण गणना
+  const directExpense = allSiteTxns.filter(t=>!t.supplierId).reduce((a,t)=>a+t.totalAmount,0);
 
   let chips = '';
   Object.entries(bySupplier).forEach(([supId, amt])=>{
-    const sup = state.suppliers.find(s=>s.id===supId);
-    chips += '<div class="chip"><b>'+esc(sup?sup.name:"—")+'</b> <span class="amt">'+inr(amt)+'</span></div>';
+    const label = supId==="_direct" ? "थेट खर्च (मजुरी/इतर)" : ((state.suppliers.find(s=>s.id===supId)||{}).name || "—");
+    chips += '<div class="chip"><b>'+esc(label)+'</b> <span class="amt">'+inr(amt)+'</span></div>';
   });
 
   let budgetHtml = '';
@@ -688,12 +760,18 @@ function renderSiteDetail(siteId){
       + '<div style="background:var(--line);border-radius:4px;height:10px;overflow:hidden;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(over?"var(--red)":(pct>85?"var(--amber)":"var(--green)"))+';"></div></div>'
       + '</div>';
   }
+  const siteUsageValue = state.usage.filter(u=>u.siteId===site.id).reduce((a,u)=>a+Number(u.value||0),0);
+  let infoFlags = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px;">'
+    + '<span style="color:var(--sub);">यात मटेरियल बिलं + मजुरी + थेट खर्च — सगळं धरून <b style="color:var(--ink);">एकूण खर्च</b> मोजला आहे.</span>'
+    + (directExpense>0 ? '<span style="color:var(--steel);font-weight:600;">🧾 थेट खर्च (मजुरी/इतर): '+inr(directExpense)+'</span>' : '')
+    + (siteUsageValue>0 ? '<span style="color:var(--amber);font-weight:600;">📦 वापरलेल्या साहित्याचं मूल्य: '+inr(siteUsageValue)+'</span>' : '')
+    + '</div>';
 
   let html = '<button class="back-btn no-print" onclick="switchTab(\'sites\')">‹ साईट्स</button>'
     + '<div class="print-only"><div class="font-display" style="font-size:20px;font-weight:700;">कंपनी खर्च नोंदवही</div><div style="font-size:13px;color:#555;">'+esc(site.name)+' — Site Report</div><div style="font-size:11px;color:#888;">प्रिंट तारीख: '+new Date().toLocaleDateString("en-IN")+'</div><hr></div>'
     + sectionHtml(site.name, site.location || "Site Report",
-        budgetHtml + filterBarHtml() + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">'+chips+'</div>' + txnTableHtml(siteTxns, false),
-        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="print-btn no-print" onclick="exportCSV(state.txns.filter(t=>t.siteId===\''+site.id+'\'),\''+esc(site.name)+'\')">⬇ Excel (CSV)</button><button class="print-btn no-print" onclick="window.print()">🖨 प्रिंट / PDF सेव्ह करा</button><div class="font-display" style="font-size:22px;font-weight:600;color:var(--orange);">'+inr(total)+'</div></div>'
+        budgetHtml + infoFlags + filterBarHtml() + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">'+chips+'</div>' + txnTableHtml(siteTxns, false),
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="print-btn no-print" onclick="exportCSV(state.txns.filter(t=>t.siteId===\''+site.id+'\'),\''+esc(site.name)+'\')">⬇ Excel (CSV)</button><button class="print-btn no-print" onclick="window.print()">🖨 प्रिंट / PDF सेव्ह करा</button><div style="text-align:right;"><div style="font-size:10.5px;color:var(--sub);text-transform:uppercase;letter-spacing:.05em;">एकूण खर्च</div><div class="font-display" style="font-size:22px;font-weight:600;color:var(--orange);">'+inr(total)+'</div></div></div>'
       );
   document.getElementById("bodyInner").innerHTML = html;
 }
@@ -787,7 +865,7 @@ function txnTableHtml(txns, showSite){
   if (txns.length===0) return '<div style="color:var(--sub);font-size:13.5px;padding:12px;">नोंदी नाहीत.</div>';
   let rows = '';
   txns.forEach(t=>{
-    const name = showSite ? ((state.sites.find(s=>s.id===t.siteId)||{}).name || "—") : ((state.suppliers.find(s=>s.id===t.supplierId)||{}).name || "—");
+    const name = showSite ? ((state.sites.find(s=>s.id===t.siteId)||{}).name || "—") : (t.supplierId ? ((state.suppliers.find(s=>s.id===t.supplierId)||{}).name || "—") : "थेट खर्च (सप्लायर नाही)");
     rows += '<div class="txn-row">'
       + '<div class="font-mono" style="color:var(--sub);font-size:11.5px;">'+esc(t.date)+'</div>'
       + '<div class="name">'+esc(name)+(t.billNo?'<div class="meta">बिल: '+esc(t.billNo)+'</div>':'')+(t.itemName?'<div class="meta">📦 '+esc(t.itemName)+(t.quantity?' · '+t.quantity+' '+esc(t.unit||""):'')+'</div>':'')+'<div class="meta">टाकलं: '+esc(t.enteredBy)+'</div></div>'
@@ -810,19 +888,18 @@ function txnTableHtml(txns, showSite){
 }
 
 /* ================= Add entry ================= */
-const addForm = { siteId:null, supplierId:null, category: CATS[0], taxableAmount:"", gstRate:0, billNo:"", date:new Date().toISOString().slice(0,10), status:"paid", mode:"cash", itemName:"", quantity:"", unit:"" };
+const addForm = { siteId:null, supplierId:"", category: CATS[0], taxableAmount:"", gstRate:0, billNo:"", date:new Date().toISOString().slice(0,10), status:"paid", mode:"cash", itemName:"", quantity:"", unit:"" };
 
 function renderAddEntry(){
-  if (state.sites.length===0 || state.suppliers.length===0){
+  if (state.sites.length===0){
     document.getElementById("bodyInner").innerHTML = sectionHtml("नवीन बिल / नोंद","Add Entry",
-      '<div class="empty-note">नोंद करण्याआधी आधी "सेटअप" मध्ये किमान एक साईट व एक सप्लायर जोडा.</div>');
+      '<div class="empty-note">नोंद करण्याआधी आधी "सेटअप" मध्ये किमान एक साईट जोडा.</div>');
     return;
   }
   if (!addForm.siteId) addForm.siteId = state.sites[0].id;
-  if (!addForm.supplierId) addForm.supplierId = state.suppliers[0].id;
 
   const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
-  const supOpts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const supOpts = '<option value="" '+(!addForm.supplierId?"selected":"")+'>— सप्लायर नाही (थेट खर्च: मजुरी/इतर) —</option>' + state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===addForm.category?"selected":"")+'>'+esc(c)+'</option>').join("");
   const gstPills = GST_RATES.map(r=>'<button type="button" class="pill '+(addForm.gstRate===r?"active-amber":"")+'" onclick="setGstRate('+r+')">'+(r===0?"नाही":r+"%")+'</button>').join("");
   const modeBtns = MODES.map(m=>'<button type="button" class="mode-btn '+(addForm.mode===m.id?"active":"")+'" onclick="setMode(\''+m.id+'\')">'+esc(m.label)+'</button>').join("");
@@ -833,7 +910,8 @@ function renderAddEntry(){
 
   const html = '<div class="form-card">'
     + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" id="f_site" onchange="addForm.siteId=this.value">'+siteOpts+'</select></div>'
-    + '<div><label class="form-label">सप्लायर / कॉन्ट्रॅक्टर</label><select class="field" id="f_sup" onchange="addForm.supplierId=this.value">'+supOpts+'</select></div></div>'
+    + '<div><label class="form-label">सप्लायर / कॉन्ट्रॅक्टर (ऐच्छिक)</label><select class="field" id="f_sup" onchange="addForm.supplierId=this.value">'+supOpts+'</select></div></div>'
+    + '<div style="font-size:11.5px;color:var(--sub);margin:-8px 0 14px 0;">टीप: मजुरी, पेट्रोल-डिझेल किंवा इतर कोणताही थेट खर्च — सप्लायर निवडण्याची गरज नाही, "सप्लायर नाही" तसंच ठेवा.</div>'
     + '<div class="form-grid2"><div><label class="form-label">कॅटेगरी</label><select class="field" onchange="addForm.category=this.value">'+catOpts+'</select></div>'
     + '<div><label class="form-label">तारीख</label><input class="field" type="date" value="'+addForm.date+'" onchange="addForm.date=this.value"></div></div>'
     + '<div class="form-grid2"><div><label class="form-label">टॅक्सेबल रक्कम (₹)</label><input class="field" type="number" id="f_amount" value="'+addForm.taxableAmount+'" placeholder="उदा. 12500" oninput="addForm.taxableAmount=this.value; updateGstPreview();"></div>'
@@ -870,13 +948,13 @@ function setMode(m){ addForm.mode = m; renderAddEntry(); }
 function setStatus(s){ addForm.status = s; renderAddEntry(); }
 async function submitTxn(){
   const errEl = document.getElementById("addErr");
-  if (!addForm.siteId || !addForm.supplierId || !addForm.taxableAmount || Number(addForm.taxableAmount)<=0){
-    errEl.textContent = "साईट, सप्लायर व योग्य रक्कम भरा."; errEl.classList.remove("hidden"); return;
+  if (!addForm.siteId || !addForm.taxableAmount || Number(addForm.taxableAmount)<=0){
+    errEl.textContent = "साईट व योग्य रक्कम भरा."; errEl.classList.remove("hidden"); return;
   }
   const gstAmount = Math.round(Number(addForm.taxableAmount) * addForm.gstRate / 100);
   const totalAmount = Number(addForm.taxableAmount) + gstAmount;
   try {
-    await addTxn({ siteId:addForm.siteId, supplierId:addForm.supplierId, category:addForm.category, taxableAmount:Number(addForm.taxableAmount), gstRate:addForm.gstRate, gstAmount, totalAmount, billNo:addForm.billNo, date:addForm.date, status:addForm.status, mode:addForm.mode, itemName:addForm.itemName, quantity:addForm.quantity, unit:addForm.unit });
+    await addTxn({ siteId:addForm.siteId, supplierId: addForm.supplierId || null, category:addForm.category, taxableAmount:Number(addForm.taxableAmount), gstRate:addForm.gstRate, gstAmount, totalAmount, billNo:addForm.billNo, date:addForm.date, status:addForm.status, mode:addForm.mode, itemName:addForm.itemName, quantity:addForm.quantity, unit:addForm.unit });
     addForm.taxableAmount = ""; addForm.billNo = ""; addForm.itemName = ""; addForm.quantity = "";
     switchTab("dashboard");
   } catch(e) {}
@@ -918,24 +996,25 @@ function submitSite(){ addSite(setupForm.siteName, setupForm.siteLoc, setupForm.
 function submitSupplier(){ addSupplier(setupForm.supName, setupForm.supCat, setupForm.supContact, setupForm.supGstin); setupForm.supName=""; setupForm.supContact=""; setupForm.supGstin=""; }
 
 /* ================= Stock ================= */
-const usageForm = { siteId:null, itemName:"", quantity:"", unit:"", date:new Date().toISOString().slice(0,10), note:"" };
+const usageForm = { siteId:null, itemName:"", quantity:"", unit:"", value:"", date:new Date().toISOString().slice(0,10), note:"" };
 
 function computeStock(){
-  // { siteId: { normItemKey: {display, unit, purchased, used} } }
+  // { siteId: { normItemKey: {display, unit, purchased, used, usedValue} } }
   const map = {};
   state.txns.forEach(t=>{
     if (!t.itemName || !t.quantity) return;
     const key = normItem(t.itemName);
     map[t.siteId] = map[t.siteId] || {};
-    map[t.siteId][key] = map[t.siteId][key] || { display:t.itemName, unit:t.unit||"", purchased:0, used:0 };
+    map[t.siteId][key] = map[t.siteId][key] || { display:t.itemName, unit:t.unit||"", purchased:0, used:0, usedValue:0 };
     map[t.siteId][key].purchased += Number(t.quantity);
     if (t.unit) map[t.siteId][key].unit = t.unit;
   });
   state.usage.forEach(u=>{
     const key = normItem(u.itemName);
     map[u.siteId] = map[u.siteId] || {};
-    map[u.siteId][key] = map[u.siteId][key] || { display:u.itemName, unit:u.unit||"", purchased:0, used:0 };
+    map[u.siteId][key] = map[u.siteId][key] || { display:u.itemName, unit:u.unit||"", purchased:0, used:0, usedValue:0 };
     map[u.siteId][key].used += Number(u.quantity);
+    map[u.siteId][key].usedValue += Number(u.value||0);
     if (u.unit && !map[u.siteId][key].unit) map[u.siteId][key].unit = u.unit;
   });
   return map;
@@ -961,7 +1040,8 @@ function renderStock(){
     + '<div><label class="form-label">वापरलेलं प्रमाण</label><input class="field" type="number" value="'+usageForm.quantity+'" placeholder="उदा. 20" oninput="usageForm.quantity=this.value;"></div>'
     + '<div><label class="form-label">युनिट</label><input class="field" list="unitList2" id="u_unit" value="'+esc(usageForm.unit)+'" placeholder="bags" oninput="usageForm.unit=this.value;"></div>'
     + '</div>' + itemDatalist + '<datalist id="unitList2">'+UNITS.map(u=>'<option value="'+u+'">').join("")+'</datalist>'
-    + '<div style="margin-bottom:14px;"><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(usageForm.note)+'" placeholder="उदा. फाउंडेशन कामासाठी वापरलं" oninput="usageForm.note=this.value;"></div>'
+    + '<div class="form-grid2"><div><label class="form-label">साहित्याची अंदाजे किंमत ₹ (ऐच्छिक)</label><input class="field" type="number" value="'+usageForm.value+'" placeholder="उदा. 12500" oninput="usageForm.value=this.value;"></div>'
+    + '<div><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(usageForm.note)+'" placeholder="उदा. फाउंडेशन कामासाठी वापरलं" oninput="usageForm.note=this.value;"></div></div>'
     + '<div id="usageErr" class="err-text hidden"></div>'
     + '<button class="btn-primary" onclick="submitUsage()">वापर नोंदवा</button>'
     + '</div>';
@@ -977,7 +1057,7 @@ function renderStock(){
       const color = balance < 0 ? "var(--red)" : (balance === 0 ? "var(--sub)" : "var(--green)");
       rows += '<div class="list-row"><div style="flex:1;">'
         + '<span style="font-weight:600;font-size:13.5px;">'+esc(it.display)+'</span> '
-        + '<span style="font-size:11.5px;color:var(--sub);">खरेदी: '+it.purchased+' '+esc(it.unit)+' · वापर: '+it.used+' '+esc(it.unit)+'</span></div>'
+        + '<span style="font-size:11.5px;color:var(--sub);">खरेदी: '+it.purchased+' '+esc(it.unit)+' · वापर: '+it.used+' '+esc(it.unit)+(it.usedValue?' ('+inr(it.usedValue)+')':'')+'</span></div>'
         + '<div class="font-mono" style="font-weight:700;color:'+color+';">'+balance+' '+esc(it.unit)+' शिल्लक</div></div>';
     });
     balanceHtml += '<div style="margin-bottom:18px;"><div style="font-weight:600;font-size:14px;color:var(--ink);margin-bottom:6px;">'+esc(site.name)+'</div><div class="list-panel">'+rows+'</div></div>';
@@ -989,11 +1069,13 @@ function renderStock(){
   if (recent.length){
     recent.forEach(u=>{
       const site = state.sites.find(s=>s.id===u.siteId);
-      usageLog += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(u.itemName)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(site?site.name:"—")+' · '+u.quantity+' '+esc(u.unit)+' · '+esc(u.date)+(u.note?' · '+esc(u.note):'')+'</span></div><button class="icon-btn" onclick="deleteUsage(\''+u.id+'\')">🗑</button></div>';
+      usageLog += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(u.itemName)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(site?site.name:"—")+' · '+u.quantity+' '+esc(u.unit)+(u.value?' · '+inr(u.value):'')+' · '+esc(u.date)+(u.note?' · '+esc(u.note):'')+'</span></div><button class="icon-btn" onclick="deleteUsage(\''+u.id+'\')">🗑</button></div>';
     });
   }
+  const totalUsageValue = state.usage.reduce((a,u)=>a+Number(u.value||0),0);
+  const usageValueStat = totalUsageValue>0 ? '<div class="stat-row" style="margin-bottom:16px;">'+statCard("वापरलेल्या साहित्याचं एकूण मूल्य","₹"+totalUsageValue.toLocaleString("en-IN"),"--amber","📦")+'</div>' : '';
 
-  const html = sectionHtml("साहित्य वापरलं म्हणून नोंदवा","Record Usage", formHtml)
+  const html = usageValueStat + sectionHtml("साहित्य वापरलं म्हणून नोंदवा","Record Usage", formHtml)
     + sectionHtml("साईट-वाईज शिल्लक स्टॉक","Stock Balance (Purchased − Used)", balanceHtml)
     + (usageLog ? sectionHtml("अलीकडचे वापर","Recent Usage", '<div class="list-panel">'+usageLog+'</div>') : '');
   document.getElementById("bodyInner").innerHTML = html;
@@ -1005,9 +1087,157 @@ async function submitUsage(){
     errEl.textContent = "साईट, साहित्याचं नाव व योग्य प्रमाण भरा."; errEl.classList.remove("hidden"); return;
   }
   try {
-    await addUsage({ siteId:usageForm.siteId, itemName:usageForm.itemName, quantity:usageForm.quantity, unit:usageForm.unit, date:usageForm.date, note:usageForm.note });
-    usageForm.itemName=""; usageForm.quantity=""; usageForm.note="";
+    await addUsage({ siteId:usageForm.siteId, itemName:usageForm.itemName, quantity:usageForm.quantity, unit:usageForm.unit, value:usageForm.value, date:usageForm.date, note:usageForm.note });
+    usageForm.itemName=""; usageForm.quantity=""; usageForm.value=""; usageForm.note="";
     renderStock();
+  } catch(e) {}
+}
+
+/* ================= Sales (Units / Customers / Receipts) ================= */
+const unitForm = { siteId:null, unitNo:"", unitType:"", area:"", price:"" };
+const custForm = { unitId:"", name:"", contact:"", email:"", bookingDate:new Date().toISOString().slice(0,10), agreementValue:"", note:"" };
+const receiptForm = { customerId:null, amount:"", date:new Date().toISOString().slice(0,10), mode:"bank", note:"" };
+const STATUS_LABEL = { available:"उपलब्ध", booked:"बुक झालं", sold:"विकलं गेलं" };
+const STATUS_COLOR = { available:"var(--green)", booked:"var(--amber)", sold:"var(--steel)" };
+
+function renderSales(){
+  if (state.sites.length===0){
+    document.getElementById("bodyInner").innerHTML = sectionHtml("विक्री","Sales", '<div class="empty-note">आधी "सेटअप" मध्ये किमान एक साईट जोडा.</div>');
+    return;
+  }
+  if (!unitForm.siteId) unitForm.siteId = state.sites[0].id;
+
+  const totalSalesValue = state.customers.reduce((a,c)=>a+c.agreementValue,0);
+  const totalReceived = state.receipts.reduce((a,r)=>a+r.amount,0);
+  const totalReceivable = totalSalesValue - totalReceived;
+  const summary = '<div class="stat-row" style="margin-bottom:20px;">'
+    + statCard("एकूण विक्री मूल्य", inr(totalSalesValue), "--orange", "🏠")
+    + statCard("एकूण जमा (Received)", inr(totalReceived), "--green", "💰")
+    + statCard("एकूण येणे बाकी (Receivable)", inr(Math.max(0,totalReceivable)), "--red", "⏳")
+    + '</div>';
+
+  // --- Units section ---
+  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===unitForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const unitFormHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" onchange="unitForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">युनिट नं.</label><input class="field" value="'+esc(unitForm.unitNo)+'" placeholder="उदा. A-101" oninput="unitForm.unitNo=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">टाईप</label><input class="field" value="'+esc(unitForm.unitType)+'" placeholder="उदा. 2BHK" oninput="unitForm.unitType=this.value;"></div>'
+    + '<div><label class="form-label">क्षेत्रफळ (sqft)</label><input class="field" type="number" value="'+unitForm.area+'" oninput="unitForm.area=this.value;"></div></div>'
+    + '<div style="margin-bottom:12px;"><label class="form-label">किंमत ₹ (ऐच्छिक)</label><input class="field" type="number" value="'+unitForm.price+'" placeholder="उदा. 4500000" oninput="unitForm.price=this.value;"></div>'
+    + '<button class="small-btn" style="background:var(--steel);" onclick="submitUnit()">＋ युनिट जोडा</button></div>';
+  let unitRows = '';
+  state.sites.forEach(site=>{
+    const su = state.units.filter(u=>u.siteId===site.id);
+    if (!su.length) return;
+    unitRows += '<div style="font-weight:600;font-size:13.5px;margin:10px 0 6px 0;">'+esc(site.name)+'</div><div class="list-panel" style="margin-bottom:10px;">';
+    su.forEach(u=>{
+      unitRows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(u.unitNo)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+esc(u.unitType||"")+(u.area?' · '+u.area+' sqft':'')+(u.price?' · '+inr(u.price):'')+'</span></div>'
+        + '<div style="display:flex;align-items:center;gap:8px;"><select class="field" style="margin:0;padding:4px 8px;font-size:11.5px;width:auto;" onchange="setUnitStatus(\''+u.id+'\',this.value)">'
+        + Object.keys(STATUS_LABEL).map(s=>'<option value="'+s+'" '+(s===u.status?"selected":"")+'>'+STATUS_LABEL[s]+'</option>').join("")
+        + '</select><button class="icon-btn" onclick="deleteUnit(\''+u.id+'\')">✕</button></div></div>';
+    });
+    unitRows += '</div>';
+  });
+  const unitsSection = sectionHtml("युनिट इन्व्हेंटरी","Units", unitFormHtml + unitRows);
+
+  // --- Customers section ---
+  const bookedUnits = state.units.filter(u=>!state.customers.some(c=>c.unitId===u.id));
+  const unitOptsForCust = '<option value="">(कोणतंही युनिट लिंक नाही)</option>' + state.units.map(u=>{
+    const site = state.sites.find(s=>s.id===u.siteId);
+    return '<option value="'+u.id+'" '+(u.id===custForm.unitId?"selected":"")+'>'+esc((site?site.name+" · ":"")+u.unitNo)+'</option>';
+  }).join("");
+  const custFormHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + '<div class="form-grid2"><div><label class="form-label">कस्टमरचं नाव</label><input class="field" value="'+esc(custForm.name)+'" oninput="custForm.name=this.value;"></div>'
+    + '<div><label class="form-label">युनिट (ऐच्छिक)</label><select class="field" onchange="custForm.unitId=this.value; autoFillPrice();">'+unitOptsForCust+'</select></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">कॉन्टॅक्ट</label><input class="field" value="'+esc(custForm.contact)+'" oninput="custForm.contact=this.value;"></div>'
+    + '<div><label class="form-label">ईमेल (ऐच्छिक)</label><input class="field" value="'+esc(custForm.email)+'" oninput="custForm.email=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">बुकिंग तारीख</label><input class="field" type="date" value="'+custForm.bookingDate+'" onchange="custForm.bookingDate=this.value;"></div>'
+    + '<div><label class="form-label">एकूण करार रक्कम ₹</label><input class="field" type="number" id="custAgreementValue" value="'+custForm.agreementValue+'" oninput="custForm.agreementValue=this.value;"></div></div>'
+    + '<div style="margin-bottom:12px;"><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(custForm.note)+'" oninput="custForm.note=this.value;"></div>'
+    + '<div id="custErr" class="err-text hidden"></div>'
+    + '<button class="small-btn" style="background:var(--orange);" onclick="submitCustomer()">＋ कस्टमर जोडा</button></div>';
+  let custRows = '';
+  state.customers.forEach(c=>{
+    const unit = state.units.find(u=>u.id===c.unitId);
+    const received = state.receipts.filter(r=>r.customerId===c.id).reduce((a,r)=>a+r.amount,0);
+    const due = c.agreementValue - received;
+    custRows += '<div class="list-row" style="cursor:pointer;" onclick="openCustomer(\''+c.id+'\')"><div>'
+      + '<span style="font-weight:600;font-size:13.5px;">'+esc(c.name)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(unit?esc(unit.unitNo)+' · ':'')+inr(c.agreementValue)+' करार'+'</span>'
+      + '</div><div style="text-align:right;"><div class="font-mono" style="font-weight:700;color:'+(due>0?"var(--red)":"var(--green)")+';font-size:12.5px;">'+(due>0?'बाकी '+inr(due):'पूर्ण भरलं')+'</div></div></div>';
+  });
+  const custSection = sectionHtml("कस्टमर / बुकिंग","Customers", custFormHtml + (custRows?'<div class="list-panel">'+custRows+'</div>':''));
+
+  const html = summary + unitsSection + custSection;
+  document.getElementById("bodyInner").innerHTML = html;
+}
+function autoFillPrice(){
+  const unit = state.units.find(u=>u.id===custForm.unitId);
+  if (unit && unit.price && !custForm.agreementValue) {
+    custForm.agreementValue = unit.price;
+    const el = document.getElementById("custAgreementValue"); if (el) el.value = unit.price;
+  }
+}
+async function submitUnit(){
+  if (!unitForm.siteId || !unitForm.unitNo.trim()) { showToast("साईट व युनिट नं. भरा."); return; }
+  await addUnit(unitForm);
+  unitForm.unitNo=""; unitForm.unitType=""; unitForm.area=""; unitForm.price="";
+}
+async function submitCustomer(){
+  const errEl = document.getElementById("custErr");
+  if (!custForm.name.trim() || !custForm.agreementValue || Number(custForm.agreementValue)<=0){
+    errEl.textContent = "कस्टमरचं नाव व योग्य करार रक्कम भरा."; errEl.classList.remove("hidden"); return;
+  }
+  try {
+    await addCustomer(custForm);
+    custForm.name=""; custForm.contact=""; custForm.email=""; custForm.agreementValue=""; custForm.note=""; custForm.unitId="";
+  } catch(e) {}
+}
+
+/* --- Customer detail (receipts) --- */
+function openCustomer(id){
+  state.activeCustomerId = id;
+  renderCustomerDetail(id);
+}
+function renderCustomerDetail(customerId){
+  const c = state.customers.find(x=>x.id===customerId);
+  if (!c) { renderSales(); return; }
+  const unit = state.units.find(u=>u.id===c.unitId);
+  const custReceipts = state.receipts.filter(r=>r.customerId===c.id).sort((a,b)=>a.date<b.date?1:-1);
+  const received = custReceipts.reduce((a,r)=>a+r.amount,0);
+  const due = c.agreementValue - received;
+
+  receiptForm.customerId = c.id;
+  const rForm = '<div class="form-card" style="max-width:560px;margin-bottom:14px;">'
+    + '<div class="form-grid2"><div><label class="form-label">जमा रक्कम ₹</label><input class="field" type="number" value="'+receiptForm.amount+'" oninput="receiptForm.amount=this.value;"></div>'
+    + '<div><label class="form-label">तारीख</label><input class="field" type="date" value="'+receiptForm.date+'" onchange="receiptForm.date=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">मोड</label><select class="field" onchange="receiptForm.mode=this.value;">'+MODES.map(m=>'<option value="'+m.id+'" '+(m.id===receiptForm.mode?"selected":"")+'>'+esc(m.label)+'</option>').join("")+'</select></div>'
+    + '<div><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(receiptForm.note)+'" oninput="receiptForm.note=this.value;"></div></div>'
+    + '<div id="rcptErr" class="err-text hidden"></div>'
+    + '<button class="btn-primary" onclick="submitReceipt()">पावती जतन करा</button></div>';
+
+  let rRows = '';
+  custReceipts.forEach(r=>{
+    rRows += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+inr(r.amount)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(r.date)+' · '+esc(modeLabel(r.mode))+(r.note?' · '+esc(r.note):'')+'</span></div><button class="icon-btn" onclick="deleteReceipt(\''+r.id+'\')">🗑</button></div>';
+  });
+
+  const html = '<button class="back-btn" onclick="switchTab(\'sales\')">‹ विक्री</button>'
+    + sectionHtml(c.name, (unit?unit.unitNo+' · ':'')+'करार: '+inr(c.agreementValue),
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;">'
+        + '<span style="color:var(--green);font-weight:600;">जमा: '+inr(received)+'</span>'
+        + '<span style="color:'+(due>0?"var(--red)":"var(--green)")+';font-weight:700;">'+(due>0?'बाकी: '+inr(due):'पूर्ण भरलं ✓')+'</span>'
+        + (c.contact?'<span style="color:var(--sub);">📞 '+esc(c.contact)+'</span>':'')
+        + '</div>'
+        + rForm + (rRows?'<div class="list-panel">'+rRows+'</div>':'<div style="color:var(--sub);font-size:13px;">अजून पावती नाही.</div>')
+      );
+  document.getElementById("bodyInner").innerHTML = html;
+}
+async function submitReceipt(){
+  const errEl = document.getElementById("rcptErr");
+  if (!receiptForm.amount || Number(receiptForm.amount)<=0){ errEl.textContent="योग्य रक्कम भरा."; errEl.classList.remove("hidden"); return; }
+  try {
+    await addReceipt(receiptForm);
+    receiptForm.amount=""; receiptForm.note="";
+    renderCustomerDetail(receiptForm.customerId);
   } catch(e) {}
 }
 </script>
