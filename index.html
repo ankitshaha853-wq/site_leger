@@ -164,6 +164,8 @@ h1,h2,h3{margin:0;}
       <button class="tab-btn" data-tab="stock" onclick="switchTab('stock')">📦 स्टॉक</button>
       <button class="tab-btn" data-tab="sales" onclick="switchTab('sales')">🏠 विक्री</button>
       <button class="tab-btn" data-tab="progress" onclick="switchTab('progress')">📐 प्रगती/RA बिल</button>
+      <button class="tab-btn" data-tab="finance" onclick="switchTab('finance')">💹 आर्थिक सारांश</button>
+      <button class="tab-btn" data-tab="more" onclick="switchTab('more')">🛠 इतर</button>
       <button class="tab-btn" data-tab="setup" onclick="switchTab('setup')">⚙ सेटअप</button>
     </div>
   </div>
@@ -314,7 +316,7 @@ const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({ "&":"&amp;","<"
 /* ================= App state ================= */
 const state = {
   session: null, authMode: "login",
-  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [], units: [], customers: [], receipts: [], workItems: [], raBills: [],
+  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [], units: [], customers: [], receipts: [], workItems: [], raBills: [], machinery: [], labor: [], documents: [],
   tab: "dashboard", activeSiteId: null, activeSupplierId: null,
   charts: {},
 };
@@ -393,6 +395,9 @@ function mapCustomer(r){ return { id:r.id, unitId:r.unit_id, name:r.name, contac
 function mapReceipt(r){ return { id:r.id, customerId:r.customer_id, amount:Number(r.amount||0), date:r.receipt_date, mode:r.mode, note:r.note||"" }; }
 function mapWorkItem(r){ return { id:r.id, siteId:r.site_id, workName:r.work_name, contractorId:r.contractor_id, totalQty:r.total_qty!=null?Number(r.total_qty):null, unit:r.unit||"", rate:r.rate!=null?Number(r.rate):null, retentionPct:Number(r.retention_pct||0) }; }
 function mapRaBill(r){ return { id:r.id, workItemId:r.work_item_id, billNo:r.bill_no, date:r.bill_date, cumulativeQty:Number(r.cumulative_qty||0), cumulativeValue:Number(r.cumulative_value||0), retentionAmount:Number(r.retention_amount||0), previousPaid:Number(r.previous_paid||0), netPayable:Number(r.net_payable||0), status:r.status, note:r.note||"" }; }
+function mapMachinery(r){ return { id:r.id, siteId:r.site_id, machineName:r.machine_name, rate:r.rate!=null?Number(r.rate):null, rateUnit:r.rate_unit, qty:r.qty!=null?Number(r.qty):null, fuelCost:Number(r.fuel_cost||0), totalCost:Number(r.total_cost||0), date:r.log_date, mode:r.mode, status:r.status, note:r.note||"" }; }
+function mapLabor(r){ return { id:r.id, siteId:r.site_id, workerName:r.worker_name, category:r.category||"", date:r.att_date, days:Number(r.days||1), wageRate:r.wage_rate!=null?Number(r.wage_rate):null, wageAmount:Number(r.wage_amount||0), status:r.status, note:r.note||"" }; }
+function mapDocument(r){ return { id:r.id, siteId:r.site_id, docName:r.doc_name, category:r.category||"", expiryDate:r.expiry_date, link:r.link||"", note:r.note||"" }; }
 function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin }; }
 function mapTxn(r, profMap){
   return {
@@ -411,7 +416,7 @@ function mapUsage(r){
 async function loadAll(){
   const token = state.session.access_token;
   try {
-    const [s, sup, t, profRows, use, adv, u, cust, rcpt, wi, ra] = await Promise.all([
+    const [s, sup, t, profRows, use, adv, u, cust, rcpt, wi, ra, mach, lab, docs] = await Promise.all([
       sb("/rest/v1/sites?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/suppliers?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/transactions?select=*&order=txn_date.desc", {token}),
@@ -423,6 +428,9 @@ async function loadAll(){
       sb("/rest/v1/receipts?select=*&order=receipt_date.desc", {token}).catch(()=>[]),
       sb("/rest/v1/work_items?select=*&order=created_at.asc", {token}).catch(()=>[]),
       sb("/rest/v1/ra_bills?select=*&order=bill_no.asc", {token}).catch(()=>[]),
+      sb("/rest/v1/machinery_log?select=*&order=log_date.desc", {token}).catch(()=>[]),
+      sb("/rest/v1/labor_attendance?select=*&order=att_date.desc", {token}).catch(()=>[]),
+      sb("/rest/v1/documents?select=*&order=created_at.desc", {token}).catch(()=>[]),
     ]);
     const profMap = {}; (profRows||[]).forEach(p=>{ profMap[p.id]=p.full_name; });
     state.profiles = profMap;
@@ -436,6 +444,9 @@ async function loadAll(){
     state.receipts = (rcpt||[]).map(mapReceipt);
     state.workItems = (wi||[]).map(mapWorkItem);
     state.raBills = (ra||[]).map(mapRaBill);
+    state.machinery = (mach||[]).map(mapMachinery);
+    state.labor = (lab||[]).map(mapLabor);
+    state.documents = (docs||[]).map(mapDocument);
     document.getElementById("meName").textContent = "👤 " + ((state.session.user.user_metadata||{}).full_name || state.session.user.email);
   } catch(e) { showToast("डेटा लोड करताना त्रुटी: " + e.message); }
 }
@@ -539,6 +550,50 @@ async function deleteRaBill(id){
   try { await sb("/rest/v1/ra_bills?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.raBills=state.raBills.filter(x=>x.id!==id); if (b) renderWorkDetail(b.workItemId); }
   catch(e) { showToast("त्रुटी: " + e.message); }
 }
+async function addMachinery(m){
+  try {
+    const body = [{ site_id:m.siteId, machine_name:m.machineName.trim(), rate:m.rate?Number(m.rate):null, rate_unit:m.rateUnit, qty:m.qty?Number(m.qty):null, fuel_cost:Number(m.fuelCost||0), total_cost:Number(m.totalCost), log_date:m.date, mode:m.mode, status:m.status, note:m.note||null, created_by:state.session.user.id }];
+    const rows = await sb("/rest/v1/machinery_log", {method:"POST", token:state.session.access_token, body});
+    state.machinery.unshift(mapMachinery(rows[0]));
+    showToast("नोंद जतन झाली"); renderMore();
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteMachinery(id){
+  try { await sb("/rest/v1/machinery_log?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.machinery=state.machinery.filter(x=>x.id!==id); renderMore(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function markMachineryPaid(id){
+  try { await sb("/rest/v1/machinery_log?id=eq."+id, {method:"PATCH", token:state.session.access_token, body:{status:"paid"}}); const m=state.machinery.find(x=>x.id===id); if(m) m.status="paid"; renderMore(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addLabor(l){
+  try {
+    const body = [{ site_id:l.siteId, worker_name:l.workerName.trim(), category:l.category||null, att_date:l.date, days:Number(l.days), wage_rate:l.wageRate?Number(l.wageRate):null, wage_amount:Number(l.wageAmount), status:l.status, note:l.note||null, created_by:state.session.user.id }];
+    const rows = await sb("/rest/v1/labor_attendance", {method:"POST", token:state.session.access_token, body});
+    state.labor.unshift(mapLabor(rows[0]));
+    showToast("हजेरी नोंदवली"); renderMore();
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteLabor(id){
+  try { await sb("/rest/v1/labor_attendance?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.labor=state.labor.filter(x=>x.id!==id); renderMore(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function markLaborPaid(id){
+  try { await sb("/rest/v1/labor_attendance?id=eq."+id, {method:"PATCH", token:state.session.access_token, body:{status:"paid"}}); const l=state.labor.find(x=>x.id===id); if(l) l.status="paid"; renderMore(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addDocument(d){
+  try {
+    const body = [{ site_id:d.siteId||null, doc_name:d.docName.trim(), category:d.category||null, expiry_date:d.expiryDate||null, link:d.link||null, note:d.note||null, created_by:state.session.user.id }];
+    const rows = await sb("/rest/v1/documents", {method:"POST", token:state.session.access_token, body});
+    state.documents.unshift(mapDocument(rows[0]));
+    showToast("डॉक्युमेंट जतन झालं"); renderMore();
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteDocument(id){
+  try { await sb("/rest/v1/documents?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.documents=state.documents.filter(x=>x.id!==id); renderMore(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
 async function addSupplier(name, category, contact, gstin){
   if (!name.trim()) return;
   try {
@@ -636,6 +691,8 @@ function rerenderCurrentTab(){
   else if (state.tab==="stock") renderStock();
   else if (state.tab==="sales") renderSales();
   else if (state.tab==="progress") renderProgress();
+  else if (state.tab==="finance") renderFinance();
+  else if (state.tab==="more") renderMore();
   else if (state.tab==="setup") renderSetup();
 }
 function openSite(id){ state.activeSiteId = id; filterState.from=""; filterState.to=""; filterState.category=""; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab==="sites")); state.tab="sites"; renderSiteDetail(id); }
@@ -1402,6 +1459,229 @@ async function submitRaBill(){
   try {
     await addRaBill({ workItemId:w.id, billNo:nextBillNo, date:raForm.date, cumulativeQty:cq, cumulativeValue:cumValue, retentionAmount:retentionAmt, previousPaid:prevPaid, netPayable, note:raForm.note });
     raForm.cumulativeQty=""; raForm.note="";
+  } catch(e) {}
+}
+
+/* ================= Finance Summary (P&L / Balance-style) ================= */
+function renderFinance(){
+  const amt = t => Number(t.totalAmount||0);
+  const totalExpenseAll = state.txns.reduce((a,t)=>a+amt(t),0);
+  const paidExpense = state.txns.filter(t=>t.status==="paid").reduce((a,t)=>a+amt(t),0);
+  const pendingExpense = state.txns.filter(t=>t.status==="pending").reduce((a,t)=>a+amt(t),0);
+
+  const raTotal = state.raBills.reduce((a,b)=>a+b.netPayable,0);
+  const raPaid = state.raBills.filter(b=>b.status==="paid").reduce((a,b)=>a+b.netPayable,0);
+  const raPending = state.raBills.filter(b=>b.status==="pending").reduce((a,b)=>a+b.netPayable,0);
+
+  const machTotal = state.machinery.reduce((a,m)=>a+m.totalCost,0);
+  const machPaid = state.machinery.filter(m=>m.status==="paid").reduce((a,m)=>a+m.totalCost,0);
+  const machPending = state.machinery.filter(m=>m.status==="pending").reduce((a,m)=>a+m.totalCost,0);
+
+  const laborTotal = state.labor.reduce((a,l)=>a+l.wageAmount,0);
+  const laborPaid = state.labor.filter(l=>l.status==="paid").reduce((a,l)=>a+l.wageAmount,0);
+  const laborPending = state.labor.filter(l=>l.status==="pending").reduce((a,l)=>a+l.wageAmount,0);
+
+  const totalCost = totalExpenseAll + raTotal + machTotal + laborTotal;
+  const totalPaidOut = paidExpense + raPaid + machPaid + laborPaid;
+  const totalPayable = pendingExpense + raPending + machPending + laborPending;
+
+  const totalRevenue = state.customers.reduce((a,c)=>a+c.agreementValue,0);
+  const totalReceived = state.receipts.reduce((a,r)=>a+r.amount,0);
+  const totalReceivable = totalRevenue - totalReceived;
+
+  const totalAdvances = state.advances.reduce((a,x)=>a+x.amount,0);
+  const netProfit = totalRevenue - totalCost;
+  const netCashFlow = totalReceived - totalPaidOut - totalAdvances;
+
+  const note = '<div style="font-size:12px;color:var(--sub);margin-bottom:16px;background:#fff;border:1px solid var(--line);border-radius:4px;padding:10px 14px;">'
+    + 'हा सारांश तुमच्याकडे आधीच नोंदवलेल्या डेटावरून आपोआप तयार होतो — वेगळी एंट्री करायची गरज नाही. नफा हा <b>अंदाजे (accrual-based)</b> आहे — म्हणजे बिल झालेलं पण पैसे न दिलेलं/न आलेलं धरूनही मोजलं आहे. एकाच कॉन्ट्रॅक्टर पेमेंटची नोंद "नोंद करा" आणि "RA बिल" दोन्हीकडे करू नका, नाहीतर खर्च दुप्पट मोजला जाईल.'
+    + '</div>';
+
+  const plSection = '<div class="stat-row" style="margin-bottom:14px;">'
+    + statCard("एकूण विक्री (Revenue)", inr(totalRevenue), "--orange", "🏠")
+    + statCard("एकूण खर्च (Cost)", inr(totalCost), "--steel", "🧾")
+    + statCard("अंदाजे नफा/तोटा", (netProfit>=0?"+":"") + inr(netProfit), netProfit>=0?"--green":"--red", netProfit>=0?"📈":"📉")
+    + '</div>';
+
+  const cashSection = '<div class="stat-row" style="margin-bottom:14px;">'
+    + statCard("जमा (ग्राहकांकडून)", inr(totalReceived), "--green", "💰")
+    + statCard("भरलेले (सप्लायर+RA)", inr(totalPaidOut), "--red", "💸")
+    + statCard("दिलेला ॲडव्हान्स", inr(totalAdvances), "--amber", "🤝")
+    + statCard("निव्वळ कॅश फ्लो", (netCashFlow>=0?"+":"") + inr(netCashFlow), netCashFlow>=0?"--green":"--red", "🏦")
+    + '</div>';
+
+  const outstandingSection = '<div class="stat-row" style="margin-bottom:20px;">'
+    + statCard("ग्राहकांकडून येणे (Receivable)", inr(Math.max(0,totalReceivable)), "--red", "⏳")
+    + statCard("सप्लायर/कॉन्ट्रॅक्टरना देणे (Payable)", inr(totalPayable), "--amber", "⚠")
+    + '</div>';
+
+  // site-wise P&L
+  let siteRows = '';
+  if (state.sites.length) {
+    siteRows += '<div class="txn-table-wrap"><div style="min-width:600px;">'
+      + '<div class="txn-head" style="grid-template-columns:1.3fr 1fr 1fr 1fr;"><div>साईट</div><div class="right">विक्री (Revenue)</div><div class="right">खर्च (Cost)</div><div class="right">नफा/तोटा</div></div>';
+    state.sites.forEach(site=>{
+      const siteUnitIds = state.units.filter(u=>u.siteId===site.id).map(u=>u.id);
+      const siteRevenue = state.customers.filter(c=>siteUnitIds.includes(c.unitId)).reduce((a,c)=>a+c.agreementValue,0);
+      const siteTxnCost = state.txns.filter(t=>t.siteId===site.id).reduce((a,t)=>a+amt(t),0);
+      const siteWorkIds = state.workItems.filter(w=>w.siteId===site.id).map(w=>w.id);
+      const siteRaCost = state.raBills.filter(b=>siteWorkIds.includes(b.workItemId)).reduce((a,b)=>a+b.netPayable,0);
+      const siteMachCost = state.machinery.filter(m=>m.siteId===site.id).reduce((a,m)=>a+m.totalCost,0);
+      const siteLaborCost = state.labor.filter(l=>l.siteId===site.id).reduce((a,l)=>a+l.wageAmount,0);
+      const siteCost = siteTxnCost + siteRaCost + siteMachCost + siteLaborCost;
+      const siteProfit = siteRevenue - siteCost;
+      siteRows += '<div class="txn-row" style="grid-template-columns:1.3fr 1fr 1fr 1fr;">'
+        + '<div class="name">'+esc(site.name)+'</div>'
+        + '<div class="right">'+inr(siteRevenue)+'</div>'
+        + '<div class="right">'+inr(siteCost)+'</div>'
+        + '<div class="right" style="font-weight:700;color:'+(siteProfit>=0?"var(--green)":"var(--red)")+';">'+(siteProfit>=0?"+":"")+inr(siteProfit)+'</div></div>';
+    });
+    siteRows += '</div></div>';
+  } else {
+    siteRows = '<div class="empty-note">साईट जोडा — मग साईट-वाईज नफा/तोटा इथे दिसेल.</div>';
+  }
+
+  const html = note + plSection + cashSection
+    + sectionHtml("येणे-देणे (Outstanding)","Outstanding", outstandingSection)
+    + sectionHtml("साईट-वाईज नफा/तोटा","Site-wise Profit & Loss", siteRows);
+  document.getElementById("bodyInner").innerHTML = html;
+}
+
+/* ================= Phase 4: Machinery / Labor / Documents ================= */
+const machForm = { siteId:null, machineName:"", rate:"", rateUnit:"per_day", qty:"", fuelCost:"", date:new Date().toISOString().slice(0,10), mode:"cash", status:"pending", note:"" };
+const laborForm = { siteId:null, workerName:"", category:"", date:new Date().toISOString().slice(0,10), days:"1", wageRate:"", status:"pending", note:"" };
+const docForm = { siteId:"", docName:"", category:"", expiryDate:"", link:"", note:"" };
+const RATE_UNITS = [{id:"per_day",label:"प्रति दिवस"},{id:"per_hour",label:"प्रति तास"},{id:"per_trip",label:"प्रति ट्रिप"}];
+const DOC_CATS = ["RERA नोंदणी","Commencement Certificate","Completion Certificate","जमीन कागदपत्रं","करार (Agreement)","परवाना/License","विमा (Insurance)","इतर"];
+
+function renderMore(){
+  if (state.sites.length===0){
+    document.getElementById("bodyInner").innerHTML = sectionHtml("इतर","Machinery / Labor / Documents", '<div class="empty-note">आधी "सेटअप" मध्ये किमान एक साईट जोडा.</div>');
+    return;
+  }
+  if (!machForm.siteId) machForm.siteId = state.sites[0].id;
+  if (!laborForm.siteId) laborForm.siteId = state.sites[0].id;
+
+  document.getElementById("bodyInner").innerHTML =
+    renderMachinerySection() + renderLaborSection() + renderDocumentsSection();
+}
+
+/* ---- Machinery ---- */
+function renderMachinerySection(){
+  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===machForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const rate = Number(machForm.rate)||0, qty = Number(machForm.qty)||0, fuel = Number(machForm.fuelCost)||0;
+  const autoTotal = rate*qty + fuel;
+  const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" onchange="machForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">मशीन/व्हेईकल</label><input class="field" value="'+esc(machForm.machineName)+'" placeholder="उदा. JCB, मिक्सर, टिप्पर" oninput="machForm.machineName=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">दर ₹</label><input class="field" type="number" value="'+machForm.rate+'" oninput="machForm.rate=this.value; renderMore();"></div>'
+    + '<div><label class="form-label">युनिट</label><select class="field" onchange="machForm.rateUnit=this.value">'+RATE_UNITS.map(u=>'<option value="'+u.id+'" '+(u.id===machForm.rateUnit?"selected":"")+'>'+u.label+'</option>').join("")+'</select></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">प्रमाण (दिवस/तास/ट्रिप)</label><input class="field" type="number" value="'+machForm.qty+'" oninput="machForm.qty=this.value; renderMore();"></div>'
+    + '<div><label class="form-label">डिझेल/इंधन खर्च ₹ (ऐच्छिक)</label><input class="field" type="number" value="'+machForm.fuelCost+'" oninput="machForm.fuelCost=this.value; renderMore();"></div></div>'
+    + (autoTotal>0 ? '<div style="font-size:12.5px;color:var(--sub);margin-bottom:10px;" class="font-mono">अंदाजे एकूण: <b style="color:var(--ink);">'+inr(autoTotal)+'</b></div>' : '')
+    + '<div class="form-grid2"><div><label class="form-label">तारीख</label><input class="field" type="date" value="'+machForm.date+'" onchange="machForm.date=this.value;"></div>'
+    + '<div><label class="form-label">पेमेंट स्टेटस</label><select class="field" onchange="machForm.status=this.value">'+['pending','paid'].map(s=>'<option value="'+s+'" '+(s===machForm.status?"selected":"")+'>'+(s==="paid"?"PAID":"PENDING")+'</option>').join("")+'</select></div></div>'
+    + '<div id="machErr" class="err-text hidden"></div>'
+    + '<button class="small-btn" style="background:var(--steel);" onclick="submitMachinery()">＋ नोंद जोडा</button></div>';
+
+  let rows = '';
+  state.machinery.slice(0,20).forEach(m=>{
+    const site = state.sites.find(s=>s.id===m.siteId);
+    rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(m.machineName)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(site?site.name:"—")+' · '+esc(m.date)+' · '+inr(m.totalCost)+'</span></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;"><span class="stamp '+(m.status==="pending"?"pending":"")+'">'+(m.status==="paid"?"PAID ✓":"PENDING")+'</span>'
+      + (m.status==="pending"?'<button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markMachineryPaid(\''+m.id+'\')">✓</button>':'')
+      + '<button class="icon-btn" onclick="deleteMachinery(\''+m.id+'\')">🗑</button></div></div>';
+  });
+  return sectionHtml("मशिनरी / व्हेईकल भाडं","Machinery & Vehicle Rental", formHtml + (rows?'<div class="list-panel">'+rows+'</div>':'<div style="color:var(--sub);font-size:13px;">अजून नोंद नाही.</div>'));
+}
+async function submitMachinery(){
+  const errEl = document.getElementById("machErr");
+  const rate = Number(machForm.rate)||0, qty = Number(machForm.qty)||0, fuel = Number(machForm.fuelCost)||0;
+  const total = rate*qty + fuel;
+  if (!machForm.machineName.trim() || total<=0){ errEl.textContent="मशीनचं नाव व दर/प्रमाण भरा."; errEl.classList.remove("hidden"); return; }
+  try {
+    await addMachinery({ siteId:machForm.siteId, machineName:machForm.machineName, rate:machForm.rate, rateUnit:machForm.rateUnit, qty:machForm.qty, fuelCost:machForm.fuelCost, totalCost:total, date:machForm.date, mode:machForm.mode, status:machForm.status, note:machForm.note });
+    machForm.machineName=""; machForm.rate=""; machForm.qty=""; machForm.fuelCost="";
+  } catch(e) {}
+}
+
+/* ---- Labor attendance ---- */
+function renderLaborSection(){
+  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===laborForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const knownWorkers = [...new Set(state.labor.map(l=>l.workerName))];
+  const workerDatalist = '<datalist id="workerList">'+knownWorkers.map(n=>'<option value="'+esc(n)+'">').join("")+'</datalist>';
+  const autoWage = (Number(laborForm.wageRate)||0) * (Number(laborForm.days)||0);
+  const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" onchange="laborForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">मजुराचं नाव</label><input class="field" list="workerList" value="'+esc(laborForm.workerName)+'" oninput="laborForm.workerName=this.value;"></div></div>'
+    + workerDatalist
+    + '<div class="form-grid2"><div><label class="form-label">काम (ऐच्छिक)</label><input class="field" value="'+esc(laborForm.category)+'" placeholder="उदा. मिस्त्री, हेल्पर" oninput="laborForm.category=this.value;"></div>'
+    + '<div><label class="form-label">तारीख</label><input class="field" type="date" value="'+laborForm.date+'" onchange="laborForm.date=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">दिवस (1 = पूर्ण, 0.5 = अर्धा)</label><input class="field" type="number" step="0.5" value="'+laborForm.days+'" oninput="laborForm.days=this.value; renderMore();"></div>'
+    + '<div><label class="form-label">दर ₹/दिवस</label><input class="field" type="number" value="'+laborForm.wageRate+'" oninput="laborForm.wageRate=this.value; renderMore();"></div></div>'
+    + (autoWage>0 ? '<div style="font-size:12.5px;color:var(--sub);margin-bottom:10px;" class="font-mono">मजुरी: <b style="color:var(--ink);">'+inr(autoWage)+'</b></div>' : '')
+    + '<div style="margin-bottom:12px;"><label class="form-label">पेमेंट स्टेटस</label><div class="status-row">'
+    + '<button type="button" class="status-btn '+(laborForm.status==="paid"?"paid-active":"")+'" onclick="laborForm.status=\'paid\'; renderMore();">PAID</button>'
+    + '<button type="button" class="status-btn '+(laborForm.status==="pending"?"pending-active":"")+'" onclick="laborForm.status=\'pending\'; renderMore();">PENDING</button></div></div>'
+    + '<div id="laborErr" class="err-text hidden"></div>'
+    + '<button class="small-btn" style="background:var(--orange);" onclick="submitLabor()">＋ हजेरी नोंदवा</button></div>';
+
+  let rows = '';
+  state.labor.slice(0,25).forEach(l=>{
+    const site = state.sites.find(s=>s.id===l.siteId);
+    rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(l.workerName)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(l.category?'· '+esc(l.category)+' ':'')+'· '+esc(site?site.name:"—")+' · '+esc(l.date)+' · '+l.days+' दिवस · '+inr(l.wageAmount)+'</span></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;"><span class="stamp '+(l.status==="pending"?"pending":"")+'">'+(l.status==="paid"?"PAID ✓":"PENDING")+'</span>'
+      + (l.status==="pending"?'<button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markLaborPaid(\''+l.id+'\')">✓</button>':'')
+      + '<button class="icon-btn" onclick="deleteLabor(\''+l.id+'\')">🗑</button></div></div>';
+  });
+  const totalWagesPending = state.labor.filter(l=>l.status==="pending").reduce((a,l)=>a+l.wageAmount,0);
+  const pendingNote = totalWagesPending>0 ? '<div style="font-size:12.5px;color:var(--red);font-weight:600;margin-bottom:10px;">⚠ न दिलेली मजुरी: '+inr(totalWagesPending)+'</div>' : '';
+  return sectionHtml("मजूर हजेरी / रोजंदारी","Labor Attendance & Wages", pendingNote + formHtml + (rows?'<div class="list-panel">'+rows+'</div>':'<div style="color:var(--sub);font-size:13px;">अजून हजेरी नाही.</div>'));
+}
+async function submitLabor(){
+  const errEl = document.getElementById("laborErr");
+  const wage = (Number(laborForm.wageRate)||0) * (Number(laborForm.days)||0);
+  if (!laborForm.workerName.trim() || wage<=0){ errEl.textContent="मजुराचं नाव व योग्य दर/दिवस भरा."; errEl.classList.remove("hidden"); return; }
+  try {
+    await addLabor({ siteId:laborForm.siteId, workerName:laborForm.workerName, category:laborForm.category, date:laborForm.date, days:laborForm.days, wageRate:laborForm.wageRate, wageAmount:wage, status:laborForm.status, note:laborForm.note });
+    laborForm.workerName=""; laborForm.category=""; laborForm.wageRate="";
+  } catch(e) {}
+}
+
+/* ---- Documents ---- */
+function renderDocumentsSection(){
+  const siteOpts = '<option value="">(कंपनी-लेव्हल, साईटशी संबंधित नाही)</option>' + state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===docForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const catOpts = DOC_CATS.map(c=>'<option value="'+c+'" '+(c===docForm.category?"selected":"")+'>'+esc(c)+'</option>').join("");
+  const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + '<div class="form-grid2"><div><label class="form-label">डॉक्युमेंटचं नाव</label><input class="field" value="'+esc(docForm.docName)+'" placeholder="उदा. RERA सर्टिफिकेट - कोरेगाव" oninput="docForm.docName=this.value;"></div>'
+    + '<div><label class="form-label">कॅटेगरी</label><select class="field" onchange="docForm.category=this.value">'+catOpts+'</select></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" onchange="docForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">एक्सपायरी तारीख (ऐच्छिक)</label><input class="field" type="date" value="'+docForm.expiryDate+'" onchange="docForm.expiryDate=this.value;"></div></div>'
+    + '<div style="margin-bottom:12px;"><label class="form-label">लिंक (Google Drive/Dropbox) — ऐच्छिक</label><input class="field" value="'+esc(docForm.link)+'" placeholder="https://drive.google.com/..." oninput="docForm.link=this.value;"></div>'
+    + '<div style="margin-bottom:12px;"><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(docForm.note)+'" oninput="docForm.note=this.value;"></div>'
+    + '<div id="docErr" class="err-text hidden"></div>'
+    + '<button class="small-btn" style="background:var(--green);" onclick="submitDocument()">＋ डॉक्युमेंट जोडा</button></div>';
+
+  const today = new Date().toISOString().slice(0,10);
+  const soon = new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  let rows = '';
+  state.documents.forEach(d=>{
+    const site = state.sites.find(s=>s.id===d.siteId);
+    const expired = d.expiryDate && d.expiryDate < today;
+    const expiringSoon = d.expiryDate && d.expiryDate >= today && d.expiryDate <= soon;
+    rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(d.docName)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(d.category?'· '+esc(d.category)+' ':'')+(site?'· '+esc(site.name)+' ':'')+(d.expiryDate?'· एक्सपायरी: '+esc(d.expiryDate):'')+'</span>'
+      + (expired?' <span style="color:var(--red);font-weight:700;font-size:11px;">⚠ एक्सपायर झालं</span>':expiringSoon?' <span style="color:var(--amber);font-weight:700;font-size:11px;">⏰ लवकरच एक्सपायर</span>':'')
+      + (d.link?' · <a href="'+esc(d.link)+'" target="_blank" style="color:var(--steel);font-size:11.5px;">लिंक उघडा ↗</a>':'')
+      + '</div><button class="icon-btn" onclick="deleteDocument(\''+d.id+'\')">🗑</button></div>';
+  });
+  return sectionHtml("डॉक्युमेंट रजिस्टर","Documents", formHtml + (rows?'<div class="list-panel">'+rows+'</div>':'<div style="color:var(--sub);font-size:13px;">अजून डॉक्युमेंट नाही.</div>'));
+}
+async function submitDocument(){
+  const errEl = document.getElementById("docErr");
+  if (!docForm.docName.trim()){ errEl.textContent="डॉक्युमेंटचं नाव भरा."; errEl.classList.remove("hidden"); return; }
+  try {
+    await addDocument(docForm);
+    docForm.docName=""; docForm.expiryDate=""; docForm.link=""; docForm.note="";
   } catch(e) {}
 }
 </script>
