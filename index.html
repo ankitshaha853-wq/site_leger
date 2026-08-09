@@ -163,6 +163,7 @@ h1,h2,h3{margin:0;}
       <button class="tab-btn" data-tab="add" onclick="switchTab('add')">＋ नोंद करा</button>
       <button class="tab-btn" data-tab="stock" onclick="switchTab('stock')">📦 स्टॉक</button>
       <button class="tab-btn" data-tab="sales" onclick="switchTab('sales')">🏠 विक्री</button>
+      <button class="tab-btn" data-tab="progress" onclick="switchTab('progress')">📐 प्रगती/RA बिल</button>
       <button class="tab-btn" data-tab="setup" onclick="switchTab('setup')">⚙ सेटअप</button>
     </div>
   </div>
@@ -313,7 +314,7 @@ const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({ "&":"&amp;","<"
 /* ================= App state ================= */
 const state = {
   session: null, authMode: "login",
-  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [], units: [], customers: [], receipts: [],
+  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [], units: [], customers: [], receipts: [], workItems: [], raBills: [],
   tab: "dashboard", activeSiteId: null, activeSupplierId: null,
   charts: {},
 };
@@ -390,6 +391,8 @@ function mapAdvance(r){ return { id:r.id, supplierId:r.supplier_id, siteId:r.sit
 function mapUnit(r){ return { id:r.id, siteId:r.site_id, unitNo:r.unit_no, unitType:r.unit_type, area:r.area_sqft!=null?Number(r.area_sqft):null, price:r.price!=null?Number(r.price):null, status:r.status }; }
 function mapCustomer(r){ return { id:r.id, unitId:r.unit_id, name:r.name, contact:r.contact, email:r.email, bookingDate:r.booking_date, agreementValue:Number(r.agreement_value||0), note:r.note||"" }; }
 function mapReceipt(r){ return { id:r.id, customerId:r.customer_id, amount:Number(r.amount||0), date:r.receipt_date, mode:r.mode, note:r.note||"" }; }
+function mapWorkItem(r){ return { id:r.id, siteId:r.site_id, workName:r.work_name, contractorId:r.contractor_id, totalQty:r.total_qty!=null?Number(r.total_qty):null, unit:r.unit||"", rate:r.rate!=null?Number(r.rate):null, retentionPct:Number(r.retention_pct||0) }; }
+function mapRaBill(r){ return { id:r.id, workItemId:r.work_item_id, billNo:r.bill_no, date:r.bill_date, cumulativeQty:Number(r.cumulative_qty||0), cumulativeValue:Number(r.cumulative_value||0), retentionAmount:Number(r.retention_amount||0), previousPaid:Number(r.previous_paid||0), netPayable:Number(r.net_payable||0), status:r.status, note:r.note||"" }; }
 function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin }; }
 function mapTxn(r, profMap){
   return {
@@ -408,7 +411,7 @@ function mapUsage(r){
 async function loadAll(){
   const token = state.session.access_token;
   try {
-    const [s, sup, t, profRows, use, adv, u, cust, rcpt] = await Promise.all([
+    const [s, sup, t, profRows, use, adv, u, cust, rcpt, wi, ra] = await Promise.all([
       sb("/rest/v1/sites?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/suppliers?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/transactions?select=*&order=txn_date.desc", {token}),
@@ -418,6 +421,8 @@ async function loadAll(){
       sb("/rest/v1/units?select=*&order=created_at.asc", {token}).catch(()=>[]),
       sb("/rest/v1/customers?select=*&order=created_at.desc", {token}).catch(()=>[]),
       sb("/rest/v1/receipts?select=*&order=receipt_date.desc", {token}).catch(()=>[]),
+      sb("/rest/v1/work_items?select=*&order=created_at.asc", {token}).catch(()=>[]),
+      sb("/rest/v1/ra_bills?select=*&order=bill_no.asc", {token}).catch(()=>[]),
     ]);
     const profMap = {}; (profRows||[]).forEach(p=>{ profMap[p.id]=p.full_name; });
     state.profiles = profMap;
@@ -429,6 +434,8 @@ async function loadAll(){
     state.units = (u||[]).map(mapUnit);
     state.customers = (cust||[]).map(mapCustomer);
     state.receipts = (rcpt||[]).map(mapReceipt);
+    state.workItems = (wi||[]).map(mapWorkItem);
+    state.raBills = (ra||[]).map(mapRaBill);
     document.getElementById("meName").textContent = "👤 " + ((state.session.user.user_metadata||{}).full_name || state.session.user.email);
   } catch(e) { showToast("डेटा लोड करताना त्रुटी: " + e.message); }
 }
@@ -498,6 +505,38 @@ async function addReceipt(r){
 }
 async function deleteReceipt(id){
   try { await sb("/rest/v1/receipts?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.receipts=state.receipts.filter(r=>r.id!==id); renderSales(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addWorkItem(w){
+  try {
+    const body = [{ site_id:w.siteId, work_name:w.workName.trim(), contractor_id:w.contractorId||null, total_qty:w.totalQty?Number(w.totalQty):null, unit:w.unit||null, rate:w.rate?Number(w.rate):null, retention_pct:w.retentionPct?Number(w.retentionPct):0 }];
+    const rows = await sb("/rest/v1/work_items", {method:"POST", token:state.session.access_token, body});
+    state.workItems.push(mapWorkItem(rows[0]));
+    showToast("कामाचा प्रकार जोडला"); renderProgress();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function deleteWorkItem(id){
+  try { await sb("/rest/v1/work_items?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.workItems=state.workItems.filter(w=>w.id!==id); renderProgress(); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addRaBill(r){
+  try {
+    const body = [{ work_item_id:r.workItemId, bill_no:r.billNo, bill_date:r.date, cumulative_qty:Number(r.cumulativeQty), cumulative_value:Number(r.cumulativeValue), retention_amount:Number(r.retentionAmount), previous_paid:Number(r.previousPaid), net_payable:Number(r.netPayable), status:r.status||"pending", note:r.note||null, created_by: state.session.user.id }];
+    const rows = await sb("/rest/v1/ra_bills", {method:"POST", token:state.session.access_token, body});
+    state.raBills.push(mapRaBill(rows[0]));
+    showToast("RA बिल जतन झालं"); renderWorkDetail(r.workItemId);
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function markRaPaid(id){
+  if (!confirm("हे RA बिल PAID म्हणून मार्क करायचं का?")) return;
+  try {
+    await sb("/rest/v1/ra_bills?id=eq."+id, {method:"PATCH", token:state.session.access_token, body:{status:"paid"}});
+    const b = state.raBills.find(x=>x.id===id); if (b) { b.status="paid"; renderWorkDetail(b.workItemId); }
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function deleteRaBill(id){
+  const b = state.raBills.find(x=>x.id===id);
+  try { await sb("/rest/v1/ra_bills?id=eq."+id, {method:"DELETE", token:state.session.access_token}); state.raBills=state.raBills.filter(x=>x.id!==id); if (b) renderWorkDetail(b.workItemId); }
   catch(e) { showToast("त्रुटी: " + e.message); }
 }
 async function addSupplier(name, category, contact, gstin){
@@ -596,6 +635,7 @@ function rerenderCurrentTab(){
   else if (state.tab==="add") renderAddEntry();
   else if (state.tab==="stock") renderStock();
   else if (state.tab==="sales") renderSales();
+  else if (state.tab==="progress") renderProgress();
   else if (state.tab==="setup") renderSetup();
 }
 function openSite(id){ state.activeSiteId = id; filterState.from=""; filterState.to=""; filterState.category=""; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab==="sites")); state.tab="sites"; renderSiteDetail(id); }
@@ -1238,6 +1278,130 @@ async function submitReceipt(){
     await addReceipt(receiptForm);
     receiptForm.amount=""; receiptForm.note="";
     renderCustomerDetail(receiptForm.customerId);
+  } catch(e) {}
+}
+
+/* ================= Work Progress + RA Bills ================= */
+const workForm = { siteId:null, workName:"", contractorId:"", totalQty:"", unit:"", rate:"", retentionPct:"5" };
+const raForm = { workItemId:null, date:new Date().toISOString().slice(0,10), cumulativeQty:"", note:"" };
+
+function renderProgress(){
+  if (state.sites.length===0){
+    document.getElementById("bodyInner").innerHTML = sectionHtml("कामाची प्रगती","Progress", '<div class="empty-note">आधी "सेटअप" मध्ये किमान एक साईट जोडा.</div>');
+    return;
+  }
+  if (!workForm.siteId) workForm.siteId = state.sites[0].id;
+  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const contractorOpts = '<option value="">(कॉन्ट्रॅक्टर नंतर जोडा)</option>' + state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+
+  const formHtml = '<div class="form-card" style="margin-bottom:14px;">'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" onchange="workForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">कामाचं नाव</label><input class="field" value="'+esc(workForm.workName)+'" placeholder="उदा. RCC वर्क - स्लॅब" oninput="workForm.workName=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">कॉन्ट्रॅक्टर (ऐच्छिक)</label><select class="field" onchange="workForm.contractorId=this.value">'+contractorOpts+'</select></div>'
+    + '<div><label class="form-label">युनिट</label><input class="field" list="unitList3" value="'+esc(workForm.unit)+'" placeholder="sqft/cum/nos" oninput="workForm.unit=this.value;"></div></div>'
+    + '<datalist id="unitList3">'+UNITS.map(u=>'<option value="'+u+'">').join("")+'</datalist>'
+    + '<div class="form-grid2"><div><label class="form-label">एकूण कामाचं प्रमाण (ऐच्छिक)</label><input class="field" type="number" value="'+workForm.totalQty+'" placeholder="उदा. 5000" oninput="workForm.totalQty=this.value;"></div>'
+    + '<div><label class="form-label">दर ₹/युनिट</label><input class="field" type="number" value="'+workForm.rate+'" placeholder="उदा. 55" oninput="workForm.rate=this.value;"></div></div>'
+    + '<div style="margin-bottom:12px;"><label class="form-label">रिटेन्शन % (कामाची हमी म्हणून राखीव रक्कम)</label><input class="field" type="number" value="'+workForm.retentionPct+'" placeholder="उदा. 5" oninput="workForm.retentionPct=this.value;"></div>'
+    + '<button class="small-btn" style="background:var(--steel);" onclick="submitWorkItem()">＋ कामाचा प्रकार जोडा</button></div>';
+
+  let rows = '';
+  state.sites.forEach(site=>{
+    const items = state.workItems.filter(w=>w.siteId===site.id);
+    if (!items.length) return;
+    rows += '<div style="font-weight:600;font-size:13.5px;margin:10px 0 6px 0;">'+esc(site.name)+'</div><div class="grid-cards" style="margin-bottom:10px;">';
+    items.forEach(w=>{
+      const contractor = state.suppliers.find(s=>s.id===w.contractorId);
+      const bills = state.raBills.filter(b=>b.workItemId===w.id).sort((a,b)=>b.billNo-a.billNo);
+      const latest = bills[0];
+      const pct = (w.totalQty && latest) ? Math.round(latest.cumulativeQty/w.totalQty*100) : null;
+      rows += '<div class="card" onclick="openWork(\''+w.id+'\')">'
+        + '<div class="card-title">'+esc(w.workName)+'</div>'
+        + '<div class="card-sub">'+(contractor?esc(contractor.name):'कॉन्ट्रॅक्टर नाही')+(w.rate?' · ₹'+w.rate+'/'+esc(w.unit||""):'')+'</div>'
+        + (pct!=null ? '<div style="background:var(--line);border-radius:4px;height:8px;overflow:hidden;margin:8px 0 4px 0;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(pct>=100?"var(--green)":"var(--orange)")+';"></div></div><div style="font-size:11.5px;color:var(--sub);">'+pct+'% काम पूर्ण</div>'
+           : '<div class="card-count" style="margin-top:8px;">'+bills.length+' RA बिल</div>')
+        + '</div>';
+    });
+    rows += '</div>';
+  });
+  if (!rows) rows = '<div class="empty-note">अजून कामाचा कोणताही प्रकार जोडलेला नाही.</div>';
+
+  document.getElementById("bodyInner").innerHTML = sectionHtml("कामाचे प्रकार जोडा","Work Items", formHtml) + sectionHtml("साईट-वाईज कामाची प्रगती","Progress by Site", rows);
+}
+async function submitWorkItem(){
+  if (!workForm.siteId || !workForm.workName.trim()) { showToast("साईट व कामाचं नाव भरा."); return; }
+  await addWorkItem(workForm);
+  workForm.workName=""; workForm.totalQty=""; workForm.rate="";
+}
+
+function openWork(id){ state.activeWorkId = id; renderWorkDetail(id); }
+function renderWorkDetail(workId){
+  const w = state.workItems.find(x=>x.id===workId);
+  if (!w) { renderProgress(); return; }
+  const site = state.sites.find(s=>s.id===w.siteId);
+  const contractor = state.suppliers.find(s=>s.id===w.contractorId);
+  const bills = state.raBills.filter(b=>b.workItemId===w.id).sort((a,b)=>a.billNo-b.billNo);
+  const lastBill = bills[bills.length-1];
+  const pct = (w.totalQty && lastBill) ? Math.round(lastBill.cumulativeQty/w.totalQty*100) : null;
+
+  raForm.workItemId = w.id;
+  if (!raForm.cumulativeQty && lastBill) raForm.cumulativeQty = "";
+  const nextBillNo = bills.length ? Math.max(...bills.map(b=>b.billNo))+1 : 1;
+
+  // प्रिव्ह्यू कॅल्क्युलेशन
+  const cq = Number(raForm.cumulativeQty)||0;
+  const cumValue = w.rate ? cq*Number(w.rate) : 0;
+  const retentionAmt = cumValue * (Number(w.retentionPct)||0) / 100;
+  const prevPaid = lastBill ? (lastBill.cumulativeValue - lastBill.retentionAmount) : 0;
+  const netPayable = (cumValue - retentionAmt) - prevPaid;
+
+  const raFormHtml = '<div class="form-card" style="max-width:560px;margin-bottom:14px;">'
+    + '<div style="font-size:12px;color:var(--sub);margin-bottom:10px;">RA बिल नं. <b>'+nextBillNo+'</b> — फक्त आजपर्यंत झालेलं <u>एकूण (cumulative)</u> काम टाका, आधीचं वजा जाऊन देय रक्कम आपोआप निघेल.</div>'
+    + '<div class="form-grid2"><div><label class="form-label">तारीख</label><input class="field" type="date" value="'+raForm.date+'" onchange="raForm.date=this.value;"></div>'
+    + '<div><label class="form-label">आजपर्यंत एकूण काम ('+esc(w.unit||"युनिट")+')</label><input class="field" type="number" id="raQty" value="'+raForm.cumulativeQty+'" oninput="raForm.cumulativeQty=this.value; renderWorkDetail(\''+w.id+'\');"></div></div>'
+    + (w.rate ? '<div style="font-size:12.5px;color:var(--sub);margin-bottom:10px;" class="font-mono">एकूण मूल्य: '+inr(cumValue)+' · रिटेन्शन ('+w.retentionPct+'%): -'+inr(retentionAmt)+' · आधी दिलेले: -'+inr(prevPaid)+' · <span style="color:var(--ink);font-weight:700;">या बिलात द्यायचे: '+inr(netPayable)+'</span></div>' : '<div style="font-size:12px;color:var(--red);margin-bottom:10px;">या कामाला दर (rate) सेट नाही — आधी वर एडिट करून दर टाका.</div>')
+    + '<div style="margin-bottom:12px;"><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(raForm.note)+'" oninput="raForm.note=this.value;"></div>'
+    + '<div id="raErr" class="err-text hidden"></div>'
+    + '<button class="btn-primary" onclick="submitRaBill()">RA बिल जतन करा</button></div>';
+
+  let billRows = '';
+  bills.slice().reverse().forEach(b=>{
+    billRows += '<div class="list-row"><div>'
+      + '<span style="font-weight:600;font-size:13px;">RA-'+b.billNo+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(b.date)+' · काम: '+b.cumulativeQty+' '+esc(w.unit||"")+' · देय: '+inr(b.netPayable)+'</span>'
+      + '</div><div style="display:flex;align-items:center;gap:8px;">'
+      + '<span class="stamp '+(b.status==="pending"?"pending":"")+'">'+(b.status==="paid"?"PAID ✓":"PENDING")+'</span>'
+      + (b.status==="pending" ? '<button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markRaPaid(\''+b.id+'\')">✓</button>' : '')
+      + '<button class="icon-btn" onclick="deleteRaBill(\''+b.id+'\')">🗑</button></div></div>';
+  });
+
+  let progressHtml = '';
+  if (pct!=null) {
+    progressHtml = '<div style="margin-bottom:14px;"><div style="background:var(--line);border-radius:4px;height:10px;overflow:hidden;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(pct>=100?"var(--green)":"var(--orange)")+';"></div></div><div style="font-size:12.5px;color:var(--sub);margin-top:4px;">'+pct+'% काम पूर्ण ('+lastBill.cumulativeQty+' / '+w.totalQty+' '+esc(w.unit||"")+')</div></div>';
+  }
+
+  const html = '<button class="back-btn" onclick="switchTab(\'progress\')">‹ प्रगती</button>'
+    + sectionHtml(w.workName, (site?site.name+' · ':'')+(contractor?contractor.name:'कॉन्ट्रॅक्टर नाही'),
+        progressHtml + raFormHtml + (billRows?'<div class="list-panel">'+billRows+'</div>':'<div style="color:var(--sub);font-size:13px;">अजून RA बिल नाही.</div>')
+      );
+  document.getElementById("bodyInner").innerHTML = html;
+}
+async function submitRaBill(){
+  const w = state.workItems.find(x=>x.id===raForm.workItemId);
+  const errEl = document.getElementById("raErr");
+  if (!raForm.cumulativeQty || Number(raForm.cumulativeQty)<=0 || !w.rate){
+    errEl.textContent = "योग्य प्रमाण भरा (आणि कामाला दर सेट असणं आवश्यक आहे)."; errEl.classList.remove("hidden"); return;
+  }
+  const bills = state.raBills.filter(b=>b.workItemId===w.id).sort((a,b)=>a.billNo-b.billNo);
+  const lastBill = bills[bills.length-1];
+  const nextBillNo = bills.length ? Math.max(...bills.map(b=>b.billNo))+1 : 1;
+  const cq = Number(raForm.cumulativeQty);
+  const cumValue = cq * Number(w.rate);
+  const retentionAmt = cumValue * (Number(w.retentionPct)||0) / 100;
+  const prevPaid = lastBill ? (lastBill.cumulativeValue - lastBill.retentionAmount) : 0;
+  const netPayable = (cumValue - retentionAmt) - prevPaid;
+  try {
+    await addRaBill({ workItemId:w.id, billNo:nextBillNo, date:raForm.date, cumulativeQty:cq, cumulativeValue:cumValue, retentionAmount:retentionAmt, previousPaid:prevPaid, netPayable, note:raForm.note });
+    raForm.cumulativeQty=""; raForm.note="";
   } catch(e) {}
 }
 </script>
