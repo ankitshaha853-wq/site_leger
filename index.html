@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="mr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>साईट लेजर — कंपनी खर्च नोंदवही</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#1E2320; --panel:#F2ECDF; --panelDark:#26302B; --ink:#221F19;
+  --sub:#6B6152; --line:#D9D0BC; --orange:#E2571C; --steel:#3E5C66;
+  --green:#4C7A45; --red:#B23A2E; --amber:#C68A1E;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);font-family:'Inter',sans-serif;color:var(--ink);}
+input,select,button{font-family:'Inter',sans-serif;}
+::placeholder{color:var(--sub);opacity:.7;}
+.hidden{display:none !important;}
+.wrap{max-width:1100px;margin:0 auto;padding:0 20px;}
+h1,h2,h3{margin:0;}
+.font-display{font-family:'Oswald',sans-serif;}
+.font-mono{font-family:'IBM Plex Mono',monospace;}
+
+/* ---- Auth screen ---- */
+#authScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+.auth-card{background:var(--panel);border-radius:6px;padding:28px;max-width:380px;width:100%;}
+.field{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:4px;font-size:14px;margin-bottom:10px;}
+.btn-primary{background:var(--orange);color:#fff;border:none;padding:11px 0;border-radius:4px;font-weight:600;font-size:14px;width:100%;cursor:pointer;}
+.btn-primary:disabled{opacity:.6;}
+.err-text{color:var(--red);font-size:12.5px;margin-bottom:10px;}
+.switch-link{color:var(--steel);font-weight:600;cursor:pointer;}
+
+/* ---- Header / nav ---- */
+#appHeader{padding:20px 0 0 0;}
+.brand-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;}
+.brand{display:flex;align-items:center;gap:10px;}
+.brand-dot{width:10px;height:10px;background:var(--orange);transform:rotate(45deg);}
+.brand-text{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.2em;color:#B7AF9E;text-transform:uppercase;}
+.user-row{display:flex;align-items:center;gap:14px;color:#B7AF9E;font-size:12px;}
+.logout-btn{display:flex;align-items:center;gap:4px;background:none;border:none;color:#B7AF9E;cursor:pointer;font-size:12px;}
+.app-title{font-family:'Oswald',sans-serif;font-size:30px;font-weight:700;color:var(--panel);margin:0 0 18px 0;}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #3A443E;}
+.tab-btn{display:flex;align-items:center;gap:6px;background:transparent;border:none;cursor:pointer;padding:10px 14px;font-weight:600;font-size:13.5px;color:#9B9384;border-bottom:2px solid transparent;}
+.tab-btn.active{color:var(--orange);border-bottom:2px solid var(--orange);}
+
+/* ---- Body panel ---- */
+#bodyPanel{background:var(--panel);min-height:calc(100vh - 140px);}
+#bodyInner{max-width:1100px;margin:0 auto;padding:24px 20px 60px 20px;}
+.section{margin-bottom:28px;}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:8px;flex-wrap:wrap;gap:8px;}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.15em;color:var(--sub);text-transform:uppercase;}
+.section-title{font-family:'Oswald',sans-serif;font-size:20px;font-weight:600;color:var(--ink);}
+
+/* ---- Cards / stats ---- */
+.stat-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
+.stat-card{background:#fff;border:1px solid var(--line);padding:16px 18px;border-radius:4px;flex:1 1 200px;}
+.stat-label{display:flex;align-items:center;gap:6px;color:var(--sub);font-size:11.5px;font-family:'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;}
+.stat-value{font-family:'Oswald',sans-serif;font-size:26px;font-weight:600;color:var(--ink);}
+
+.grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;}
+.card{background:#fff;border:1px solid var(--line);border-radius:4px;padding:16px;cursor:pointer;}
+.card-title{font-family:'Oswald',sans-serif;font-size:17px;font-weight:600;color:var(--ink);}
+.card-sub{font-size:12px;color:var(--sub);margin-bottom:10px;}
+.card-amount{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:18px;}
+.card-count{font-size:11.5px;color:var(--sub);}
+
+.chart-box{background:#fff;border:1px solid var(--line);border-radius:4px;padding:16px;height:260px;}
+.empty-note{background:#fff;border:1px dashed var(--line);padding:24px;border-radius:4px;color:var(--sub);font-size:14px;}
+
+.list-panel{background:#fff;border:1px solid var(--line);border-radius:4px;}
+.list-row{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-top:1px solid var(--line);cursor:default;}
+.list-row:first-child{border-top:none;}
+.list-row.clickable{cursor:pointer;}
+.icon-btn{background:none;border:none;cursor:pointer;color:var(--sub);}
+
+.chip{background:#fff;border:1px solid var(--line);border-radius:4px;padding:8px 12px;font-size:12.5px;}
+.chip b{color:var(--ink);font-weight:600;}
+.chip .amt{color:var(--sub);font-family:'IBM Plex Mono',monospace;}
+
+.back-btn{display:flex;align-items:center;gap:4px;background:none;border:none;color:var(--steel);font-weight:600;font-size:13px;cursor:pointer;padding:0;margin-bottom:14px;}
+
+.stamp{display:inline-block;border:2px solid var(--green);color:var(--green);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;letter-spacing:.12em;padding:2px 8px;border-radius:3px;transform:rotate(-3deg);text-transform:uppercase;white-space:nowrap;}
+.stamp.pending{border-color:var(--red);color:var(--red);}
+
+.print-btn{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);color:var(--steel);padding:7px 12px;border-radius:4px;font-weight:600;font-size:12.5px;cursor:pointer;}
+
+/* ---- table ---- */
+.txn-table-wrap{background:#fff;border:1px solid var(--line);border-radius:4px;overflow-x:auto;}
+.txn-table{min-width:900px;width:100%;}
+.txn-head,.txn-row{display:grid;grid-template-columns:85px 1fr 95px 85px 90px 95px 90px 150px 30px;align-items:center;}
+.txn-head{padding:9px 14px;background:var(--panelDark);color:var(--panel);font-size:10.5px;font-family:'IBM Plex Mono',monospace;letter-spacing:.04em;text-transform:uppercase;}
+.txn-row{padding:10px 14px;border-top:1px solid var(--line);font-size:12.5px;}
+.txn-row .name{font-weight:600;color:var(--ink);}
+.txn-row .meta{font-size:10px;color:var(--sub);font-weight:400;}
+.right{text-align:right;font-family:'IBM Plex Mono',monospace;}
+
+/* ---- form ---- */
+.form-card{background:#fff;border:1px solid var(--line);border-radius:4px;padding:20px;max-width:560px;}
+.form-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+.form-label{font-size:12px;font-weight:600;color:var(--sub);margin-bottom:5px;display:block;text-transform:uppercase;letter-spacing:.04em;}
+.pill-row{display:flex;gap:8px;flex-wrap:wrap;}
+.pill{padding:7px 14px;border-radius:4px;cursor:pointer;font-weight:600;font-size:12.5px;border:1.5px solid var(--line);background:#fff;color:var(--sub);}
+.pill.active-amber{border-color:var(--amber);background:#FBF2E1;color:var(--amber);}
+.mode-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.mode-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 4px;border-radius:4px;cursor:pointer;font-weight:600;font-size:11px;border:1.5px solid var(--line);background:#fff;color:var(--sub);}
+.mode-btn.active{border-color:var(--steel);background:#EAF0F2;color:var(--steel);}
+.status-row{display:flex;gap:10px;}
+.status-btn{flex:1;padding:9px 0;border-radius:4px;cursor:pointer;font-weight:600;font-size:13px;border:1.5px solid var(--line);background:#fff;color:var(--sub);}
+.status-btn.paid-active{border-color:var(--green);background:#EAF3E8;color:var(--green);}
+.status-btn.pending-active{border-color:var(--red);background:#F7E9E7;color:var(--red);}
+
+.small-btn{color:#fff;border:none;padding:9px 16px;border-radius:4px;font-weight:600;font-size:13px;cursor:pointer;width:100%;}
+
+/* ---- toast ---- */
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:10px 20px;border-radius:6px;font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,.3);}
+
+.loader{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+.spin{animation:spin 1s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.print-only{display:none;}
+@media print{
+  .no-print{display:none !important;}
+  body{background:#fff !important;}
+  .print-only{display:block !important;margin-bottom:16px;}
+}
+</style>
+</head>
+<body>
+
+<div id="loader" class="loader"><svg class="spin" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#E2571C" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-opacity=".25"/><path d="M12 2 A10 10 0 0 1 22 12"/></svg></div>
+
+<div id="authScreen" class="hidden">
+  <div class="auth-card">
+    <div class="brand" style="margin-bottom:4px;"><div class="brand-dot" style="width:9px;height:9px;"></div><span class="eyebrow">साईट लेजर</span></div>
+    <h3 class="font-display" id="authTitle" style="font-size:22px;margin:2px 0 18px 0;">लॉगिन करा</h3>
+    <input id="authFullName" class="field hidden" placeholder="पूर्ण नाव">
+    <input id="authEmail" class="field" type="email" placeholder="ईमेल">
+    <input id="authPassword" class="field" type="password" placeholder="पासवर्ड (किमान ६ अक्षरं)">
+    <div id="authErr" class="err-text hidden"></div>
+    <button id="authSubmitBtn" class="btn-primary" style="margin-bottom:12px;">लॉगिन</button>
+    <div style="text-align:center;font-size:12.5px;color:var(--sub);" id="authSwitchRow">
+      अकाउंट नाही? <span class="switch-link" onclick="toggleAuthMode()">नवीन बनवा</span>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div id="appHeader" class="no-print wrap">
+    <div class="brand-row">
+      <div class="brand"><div class="brand-dot"></div><span class="brand-text">साईट लेजर — Internal Cost Register</span></div>
+      <div class="user-row">
+        <span id="meName"></span>
+        <button class="logout-btn" onclick="logout()">⏻ लॉगआउट</button>
+      </div>
+    </div>
+    <h1 class="app-title">कंपनी खर्च नोंदवही</h1>
+    <div class="tabs" id="tabs">
+      <button class="tab-btn" data-tab="dashboard" onclick="switchTab('dashboard')">▤ डॅशबोर्ड</button>
+      <button class="tab-btn" data-tab="sites" onclick="switchTab('sites')">🏗 साईट्स</button>
+      <button class="tab-btn" data-tab="suppliers" onclick="switchTab('suppliers')">👥 सप्लायर्स</button>
+      <button class="tab-btn" data-tab="add" onclick="switchTab('add')">＋ नोंद करा</button>
+      <button class="tab-btn" data-tab="stock" onclick="switchTab('stock')">📦 स्टॉक</button>
+      <button class="tab-btn" data-tab="setup" onclick="switchTab('setup')">⚙ सेटअप</button>
+    </div>
+  </div>
+  <div id="bodyPanel">
+    <div id="bodyInner"></div>
+  </div>
+</div>
+
+<div id="toast" class="hidden no-print"></div>
+
+<script>
+/* ================= Supabase (REST + Auth via fetch, no SDK) ================= */
+const SUPABASE_URL = "https://yxexwqdihekuehaepkoi.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4ZXh3cWRpaGVrdWVoYWVwa29pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyMDkwNzgsImV4cCI6MjEwMTc4NTA3OH0.W-pV3PhF6dq0DFCtSdENpX6mDd6OSn5l3c3fum0oF68";
+
+async function sb(path, { method = "GET", body, token } = {}) {
+  const headers = { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" };
+  headers.Authorization = "Bearer " + (token || SUPABASE_ANON_KEY);
+  if (body !== undefined) headers.Prefer = "return=representation";
+  const res = await fetch(SUPABASE_URL + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { const j = await res.json(); msg = j.error_description || j.msg || j.message || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  if (res.status === 204) return null;
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const apiSignUp = (email, password, full_name) => sb("/auth/v1/signup", { method: "POST", body: { email, password, data: { full_name } } });
+const apiSignIn = (email, password) => sb("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } });
+const apiRefresh = (refresh_token) => sb("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token } });
+
+/* Local storage helpers — this file is meant to be hosted on your own server,
+   so plain localStorage is used to remember the login session between visits. */
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+
+/* ================= Constants ================= */
+const CATS = ["टाईल वर्क","आरसीसी वर्क","प्लास्टर वर्क","ऍडमिश्चर","सिमेंट","केमिकल्स","पेट्रोल-डिझेल","किरकोळ मटेरियल","इतर लेबर"];
+const PIE_COLORS = ["#E2571C","#3E5C66","#4C7A45","#C68A1E","#B23A2E","#8A6D3B","#5B7C99","#7A5C4F","#9C8B5E"];
+const GST_RATES = [0,5,12,18,28];
+const MODES = [
+  {id:"cash", label:"रोख (Cash)"},
+  {id:"bank", label:"बँक ट्रान्सफर"},
+  {id:"upi", label:"UPI"},
+  {id:"cheque", label:"चेक"},
+];
+const UNITS = ["bags","kg","ton","cum","sqft","nos","ltr","brass","mtr"];
+const COMMON_ITEMS = [
+  {name:"सिमेंट OPC 53", unit:"bags", alias:["cement opc 53","opc 53 cement","cement"]},
+  {name:"सिमेंट OPC 43", unit:"bags", alias:["cement opc 43","opc 43 cement"]},
+  {name:"सिमेंट PPC", unit:"bags", alias:["cement ppc","ppc cement"]},
+  {name:"वाळू (नदी)", unit:"brass", alias:["sand river","river sand","sand"]},
+  {name:"वाळू (M-Sand)", unit:"brass", alias:["m-sand","m sand","msand"]},
+  {name:"खडी 20mm", unit:"brass", alias:["aggregate 20mm","gitti 20mm","khadi 20mm"]},
+  {name:"खडी 10mm", unit:"brass", alias:["aggregate 10mm","gitti 10mm","khadi 10mm"]},
+  {name:"खडी 40mm", unit:"brass", alias:["aggregate 40mm","gitti 40mm","khadi 40mm"]},
+  {name:"मुरूम", unit:"brass", alias:["murum"]},
+  {name:"स्टील बार 8mm (TMT)", unit:"kg", alias:["tmt steel 8mm","steel 8mm","tmt bar 8mm","steel bar 8mm"]},
+  {name:"स्टील बार 10mm (TMT)", unit:"kg", alias:["tmt steel 10mm","steel 10mm","tmt bar 10mm","steel bar 10mm"]},
+  {name:"स्टील बार 12mm (TMT)", unit:"kg", alias:["tmt steel 12mm","steel 12mm","tmt bar 12mm","steel bar 12mm"]},
+  {name:"स्टील बार 16mm (TMT)", unit:"kg", alias:["tmt steel 16mm","steel 16mm","tmt bar 16mm","steel bar 16mm"]},
+  {name:"स्टील बार 20mm (TMT)", unit:"kg", alias:["tmt steel 20mm","steel 20mm","tmt bar 20mm","steel bar 20mm"]},
+  {name:"स्टील बार 25mm (TMT)", unit:"kg", alias:["tmt steel 25mm","steel 25mm","tmt bar 25mm","steel bar 25mm"]},
+  {name:"बाइंडिंग वायर", unit:"kg", alias:["binding wire"]},
+  {name:"रेड ब्रिक (वीट)", unit:"nos", alias:["red brick","brick","bricks","vit"]},
+  {name:"फ्लाय ऍश ब्रिक", unit:"nos", alias:["fly ash brick"]},
+  {name:"AAC ब्लॉक", unit:"nos", alias:["aac block"]},
+  {name:"सिमेंट ब्लॉक (सॉलिड)", unit:"nos", alias:["cement block","solid block"]},
+  {name:"फ्लोअर टाईल्स", unit:"sqft", alias:["floor tiles","floor tile"]},
+  {name:"वॉल टाईल्स", unit:"sqft", alias:["wall tiles","wall tile"]},
+  {name:"विट्रिफाइड टाईल्स", unit:"sqft", alias:["vitrified tiles","vitrified tile"]},
+  {name:"मार्बल", unit:"sqft", alias:["marble"]},
+  {name:"ग्रॅनाईट", unit:"sqft", alias:["granite"]},
+  {name:"टाईल अॅडेसिव्ह", unit:"bags", alias:["tile adhesive"]},
+  {name:"टाईल ग्राउट", unit:"kg", alias:["tile grout","grout"]},
+  {name:"वॉल पुट्टी", unit:"bags", alias:["wall putty","putty"]},
+  {name:"प्रायमर (पेंट)", unit:"ltr", alias:["primer","paint primer"]},
+  {name:"इंटिरियर पेंट", unit:"ltr", alias:["interior paint"]},
+  {name:"एक्सटिरियर पेंट", unit:"ltr", alias:["exterior paint"]},
+  {name:"डिस्टेंपर", unit:"ltr", alias:["distemper"]},
+  {name:"प्लायवूड", unit:"sqft", alias:["plywood","ply"]},
+  {name:"लॅमिनेट शीट", unit:"nos", alias:["laminate sheet","laminate"]},
+  {name:"शटरिंग प्लायवूड", unit:"sqft", alias:["shuttering plywood","shuttering ply"]},
+  {name:"PVC पाईप", unit:"nos", alias:["pvc pipe"]},
+  {name:"CPVC पाईप", unit:"nos", alias:["cpvc pipe"]},
+  {name:"GI पाईप", unit:"nos", alias:["gi pipe"]},
+  {name:"इलेक्ट्रिकल वायर (केबल)", unit:"mtr", alias:["electrical wire","cable","wire"]},
+  {name:"स्विच/सॉकेट", unit:"nos", alias:["switch","socket","switch socket"]},
+  {name:"MCB / डिस्ट्रिब्युशन बोर्ड", unit:"nos", alias:["mcb","distribution board","db box"]},
+  {name:"कमोड (सॅनिटरी)", unit:"nos", alias:["commode","toilet seat","wc"]},
+  {name:"वॉश बेसिन", unit:"nos", alias:["wash basin","basin"]},
+  {name:"CP फिटिंग्स (नळ/कॉक)", unit:"nos", alias:["cp fittings","tap","nal"]},
+  {name:"ऍल्युमिनियम विंडो", unit:"sqft", alias:["aluminium window","aluminum window"]},
+  {name:"UPVC विंडो", unit:"sqft", alias:["upvc window"]},
+  {name:"लाकडी दरवाजा", unit:"nos", alias:["wooden door","door"]},
+  {name:"ग्लास (काच)", unit:"sqft", alias:["glass"]},
+  {name:"हिंजेस/लॉक्स (हार्डवेअर)", unit:"nos", alias:["hinges","locks","hardware"]},
+  {name:"वॉटरप्रूफिंग केमिकल", unit:"ltr", alias:["waterproofing chemical","waterproofing"]},
+  {name:"कॉंक्रीट ऍडमिश्चर", unit:"ltr", alias:["concrete admixture","admixture"]},
+  {name:"क्युरिंग कंपाऊंड", unit:"ltr", alias:["curing compound"]},
+  {name:"डांबर (Bitumen)", unit:"kg", alias:["bitumen","damar"]},
+  {name:"पेट्रोल", unit:"ltr", alias:["petrol"]},
+  {name:"डिझेल", unit:"ltr", alias:["diesel"]},
+];
+const ALIAS_MAP = {};
+COMMON_ITEMS.forEach(it=>{
+  ALIAS_MAP[it.name.trim().toLowerCase()] = it;
+  (it.alias||[]).forEach(a=>{ ALIAS_MAP[a.trim().toLowerCase()] = it; });
+});
+function buildItemDatalist(id, extraNames){
+  const names = new Set();
+  COMMON_ITEMS.forEach(it=>{ names.add(it.name); (it.alias||[]).forEach(a=>names.add(a)); });
+  (extraNames||[]).forEach(n=>{ if(n) names.add(n); });
+  return '<datalist id="'+id+'">'+[...names].map(n=>'<option value="'+esc(n)+'">').join("")+'</datalist>';
+}
+function handleItemInput(formObj, itemFieldId, unitFieldId){
+  const key = (formObj.itemName||"").trim().toLowerCase();
+  const match = ALIAS_MAP[key];
+  if (match) {
+    formObj.itemName = match.name; // इंग्लिश/मराठी कुठलंही टाकलं तरी एकाच (मराठी) नावाखाली सेव्ह होईल — स्टॉक अचूक मोजण्यासाठी
+    if (!formObj.unit) formObj.unit = match.unit;
+    const itemEl = document.getElementById(itemFieldId); if (itemEl) itemEl.value = formObj.itemName;
+    const unitEl = document.getElementById(unitFieldId); if (unitEl) unitEl.value = formObj.unit;
+  }
+}
+const inr = n => "₹" + Number(n||0).toLocaleString("en-IN");
+const modeLabel = id => (MODES.find(m=>m.id===id)||{}).label || id;
+const normItem = s => (s||"").trim().toLowerCase();
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+/* ================= App state ================= */
+const state = {
+  session: null, authMode: "login",
+  sites: [], suppliers: [], txns: [], profiles: {}, usage: [], advances: [],
+  tab: "dashboard", activeSiteId: null, activeSupplierId: null,
+  charts: {},
+};
+
+/* ================= Boot ================= */
+window.addEventListener("DOMContentLoaded", boot);
+async function boot(){
+  const rt = lsGet("ledger_refresh_token");
+  if (rt) {
+    try {
+      const data = await apiRefresh(rt);
+      if (data && data.access_token) { state.session = data; lsSet("ledger_refresh_token", data.refresh_token); }
+    } catch(e) {}
+  }
+  document.getElementById("loader").classList.add("hidden");
+  if (state.session) { document.getElementById("app").classList.remove("hidden"); await loadAll(); switchTab("dashboard"); }
+  else { document.getElementById("authScreen").classList.remove("hidden"); }
+}
+
+/* ================= Auth UI ================= */
+function toggleAuthMode(){
+  state.authMode = state.authMode === "login" ? "signup" : "login";
+  document.getElementById("authTitle").textContent = state.authMode === "login" ? "लॉगिन करा" : "नवीन अकाउंट";
+  document.getElementById("authFullName").classList.toggle("hidden", state.authMode !== "signup");
+  document.getElementById("authSubmitBtn").textContent = state.authMode === "login" ? "लॉगिन" : "अकाउंट तयार करा";
+  document.getElementById("authSwitchRow").innerHTML = state.authMode === "login"
+    ? 'अकाउंट नाही? <span class="switch-link" onclick="toggleAuthMode()">नवीन बनवा</span>'
+    : 'आधीच अकाउंट आहे? <span class="switch-link" onclick="toggleAuthMode()">लॉगिन करा</span>';
+}
+document.addEventListener("DOMContentLoaded", ()=>{
+  document.getElementById("authSubmitBtn").addEventListener("click", submitAuth);
+  document.getElementById("authPassword").addEventListener("keydown", e => { if(e.key==="Enter") submitAuth(); });
+});
+async function submitAuth(){
+  const errEl = document.getElementById("authErr");
+  errEl.classList.add("hidden");
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  const fullName = document.getElementById("authFullName").value.trim();
+  const btn = document.getElementById("authSubmitBtn");
+  btn.disabled = true; btn.textContent = "...";
+  try {
+    let data;
+    if (state.authMode === "signup") {
+      if (!fullName) throw new Error("तुमचं नाव भरा.");
+      data = await apiSignUp(email, password, fullName);
+    } else {
+      data = await apiSignIn(email, password);
+    }
+    if (!data || !data.access_token) throw new Error("ईमेल कन्फर्मेशन आवश्यक असू शकतं — Supabase मध्ये 'Confirm email' बंद करा किंवा इनबॉक्स तपासा.");
+    state.session = data;
+    lsSet("ledger_refresh_token", data.refresh_token);
+    document.getElementById("authScreen").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+    await loadAll();
+    switchTab("dashboard");
+  } catch(e) {
+    errEl.textContent = e.message || "काहीतरी चुकलं.";
+    errEl.classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = state.authMode === "login" ? "लॉगिन" : "अकाउंट तयार करा";
+  }
+}
+function logout(){
+  state.session = null; lsDel("ledger_refresh_token");
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("authScreen").classList.remove("hidden");
+}
+
+/* ================= Data mapping ================= */
+function mapSite(r){ return { id:r.id, name:r.name, location:r.location, budget: r.budget!=null ? Number(r.budget) : null }; }
+function mapAdvance(r){ return { id:r.id, supplierId:r.supplier_id, siteId:r.site_id, amount:Number(r.amount||0), date:r.adv_date, mode:r.mode, note:r.note||"" }; }
+function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin }; }
+function mapTxn(r, profMap){
+  return {
+    id:r.id, siteId:r.site_id, supplierId:r.supplier_id, category:r.category,
+    taxableAmount:Number(r.taxable_amount||0), gstRate:Number(r.gst_rate||0), gstAmount:Number(r.gst_amount||0),
+    totalAmount:Number(r.total_amount||0), billNo:r.bill_no, date:r.txn_date, status:r.status, mode:r.mode,
+    itemName:r.item_name || "", quantity: r.quantity!=null ? Number(r.quantity) : null, unit:r.unit || "",
+    enteredBy: (profMap && profMap[r.entered_by]) || "—",
+  };
+}
+function mapUsage(r){
+  return { id:r.id, siteId:r.site_id, itemName:r.item_name, quantity:Number(r.quantity||0), unit:r.unit||"", date:r.usage_date, note:r.note||"" };
+}
+
+/* ================= Data load / CRUD ================= */
+async function loadAll(){
+  const token = state.session.access_token;
+  try {
+    const [s, sup, t, profRows, use, adv] = await Promise.all([
+      sb("/rest/v1/sites?select=*&order=created_at.asc", {token}),
+      sb("/rest/v1/suppliers?select=*&order=created_at.asc", {token}),
+      sb("/rest/v1/transactions?select=*&order=txn_date.desc", {token}),
+      sb("/rest/v1/profiles?select=id,full_name", {token}),
+      sb("/rest/v1/material_usage?select=*&order=usage_date.desc", {token}).catch(()=>[]),
+      sb("/rest/v1/advances?select=*&order=adv_date.desc", {token}).catch(()=>[]),
+    ]);
+    const profMap = {}; (profRows||[]).forEach(p=>{ profMap[p.id]=p.full_name; });
+    state.profiles = profMap;
+    state.sites = (s||[]).map(mapSite);
+    state.suppliers = (sup||[]).map(mapSupplier);
+    state.txns = (t||[]).map(r=>mapTxn(r, profMap));
+    state.usage = (use||[]).map(mapUsage);
+    state.advances = (adv||[]).map(mapAdvance);
+    document.getElementById("meName").textContent = "👤 " + ((state.session.user.user_metadata||{}).full_name || state.session.user.email);
+  } catch(e) { showToast("डेटा लोड करताना त्रुटी: " + e.message); }
+}
+
+async function addSite(name, location, budget){
+  if (!name.trim()) return;
+  try {
+    const rows = await sb("/rest/v1/sites", {method:"POST", token:state.session.access_token, body:[{name:name.trim(), location:location.trim(), budget: budget ? Number(budget) : null}]});
+    state.sites.push(mapSite(rows[0]));
+    showToast("साईट जोडली"); renderSetup();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addAdvance(a){
+  try {
+    const body = [{ supplier_id:a.supplierId, site_id:a.siteId||null, amount:Number(a.amount), adv_date:a.date, mode:a.mode, note:a.note||null, created_by: state.session.user.id }];
+    const rows = await sb("/rest/v1/advances", {method:"POST", token:state.session.access_token, body});
+    state.advances.unshift(mapAdvance(rows[0]));
+    showToast("ॲडव्हान्स नोंदवला");
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteAdvance(id){
+  try {
+    await sb("/rest/v1/advances?id=eq." + id, {method:"DELETE", token:state.session.access_token});
+    state.advances = state.advances.filter(a=>a.id!==id);
+    rerenderCurrentTab();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addSupplier(name, category, contact, gstin){
+  if (!name.trim()) return;
+  try {
+    const rows = await sb("/rest/v1/suppliers", {method:"POST", token:state.session.access_token, body:[{name:name.trim(), category, contact:contact.trim(), gstin:gstin.trim()}]});
+    state.suppliers.push(mapSupplier(rows[0]));
+    showToast("सप्लायर जोडला"); renderSetup();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addTxn(tx){
+  try {
+    const body = [{
+      site_id: tx.siteId, supplier_id: tx.supplierId, category: tx.category,
+      taxable_amount: tx.taxableAmount, gst_rate: tx.gstRate, gst_amount: tx.gstAmount, total_amount: tx.totalAmount,
+      bill_no: tx.billNo, txn_date: tx.date, status: tx.status, mode: tx.mode, entered_by: state.session.user.id,
+      item_name: tx.itemName || null, quantity: tx.quantity ? Number(tx.quantity) : null, unit: tx.unit || null,
+    }];
+    const rows = await sb("/rest/v1/transactions", {method:"POST", token:state.session.access_token, body});
+    state.txns.unshift(mapTxn(rows[0], state.profiles));
+    showToast("नोंद जतन झाली");
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteTxn(id){
+  try {
+    await sb("/rest/v1/transactions?id=eq." + id, {method:"DELETE", token:state.session.access_token});
+    state.txns = state.txns.filter(t=>t.id!==id);
+    rerenderCurrentTab();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function markPaid(id){
+  if (!confirm("ही नोंद PAID म्हणून मार्क करायची का?")) return;
+  try {
+    await sb("/rest/v1/transactions?id=eq." + id, {method:"PATCH", token:state.session.access_token, body:{ status:"paid" }});
+    const t = state.txns.find(x=>x.id===id);
+    if (t) t.status = "paid";
+    showToast("PAID म्हणून मार्क केलं");
+    rerenderCurrentTab();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function addUsage(u){
+  try {
+    const body = [{ site_id:u.siteId, item_name:u.itemName.trim(), quantity:Number(u.quantity), unit:u.unit||null, usage_date:u.date, note:u.note||null, created_by: state.session.user.id }];
+    const rows = await sb("/rest/v1/material_usage", {method:"POST", token:state.session.access_token, body});
+    state.usage.unshift(mapUsage(rows[0]));
+    showToast("वापर नोंदवला");
+  } catch(e) { showToast("त्रुटी: " + e.message); throw e; }
+}
+async function deleteUsage(id){
+  try {
+    await sb("/rest/v1/material_usage?id=eq." + id, {method:"DELETE", token:state.session.access_token});
+    state.usage = state.usage.filter(u=>u.id!==id);
+    renderStock();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function deleteSite(id){
+  try {
+    await sb("/rest/v1/sites?id=eq." + id, {method:"DELETE", token:state.session.access_token});
+    state.sites = state.sites.filter(s=>s.id!==id);
+    renderSetup();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+async function deleteSupplier(id){
+  try {
+    await sb("/rest/v1/suppliers?id=eq." + id, {method:"DELETE", token:state.session.access_token});
+    state.suppliers = state.suppliers.filter(s=>s.id!==id);
+    renderSetup();
+  } catch(e) { showToast("त्रुटी: " + e.message); }
+}
+
+/* ================= Totals ================= */
+function computeTotals(){
+  const amt = t => Number(t.totalAmount||0);
+  const total = state.txns.reduce((a,t)=>a+amt(t),0);
+  const totalGst = state.txns.reduce((a,t)=>a+Number(t.gstAmount||0),0);
+  const pending = state.txns.filter(t=>t.status==="pending").reduce((a,t)=>a+amt(t),0);
+  const cash = state.txns.filter(t=>t.mode==="cash").reduce((a,t)=>a+amt(t),0);
+  const bank = state.txns.filter(t=>t.mode!=="cash").reduce((a,t)=>a+amt(t),0);
+  const perSite = state.sites.map(s=>({ site:s, amount: state.txns.filter(t=>t.siteId===s.id).reduce((a,t)=>a+amt(t),0), count: state.txns.filter(t=>t.siteId===s.id).length }));
+  const perSupplier = state.suppliers.map(s=>({ supplier:s, amount: state.txns.filter(t=>t.supplierId===s.id).reduce((a,t)=>a+amt(t),0), count: state.txns.filter(t=>t.supplierId===s.id).length })).sort((a,b)=>b.amount-a.amount);
+  const perCategory = CATS.map(c=>({ name:c, value: state.txns.filter(t=>t.category===c).reduce((a,t)=>a+amt(t),0) })).filter(c=>c.value>0);
+  return { total, totalGst, pending, cash, bank, perSite, perSupplier, perCategory };
+}
+
+/* ================= Tabs / router ================= */
+function switchTab(tab){
+  state.tab = tab; state.activeSiteId = null; state.activeSupplierId = null;
+  document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab===tab));
+  rerenderCurrentTab();
+}
+function rerenderCurrentTab(){
+  if (state.tab==="dashboard") renderDashboard();
+  else if (state.tab==="sites") state.activeSiteId ? renderSiteDetail(state.activeSiteId) : renderSites();
+  else if (state.tab==="suppliers") state.activeSupplierId ? renderSupplierDetail(state.activeSupplierId) : renderSuppliers();
+  else if (state.tab==="add") renderAddEntry();
+  else if (state.tab==="stock") renderStock();
+  else if (state.tab==="setup") renderSetup();
+}
+function openSite(id){ state.activeSiteId = id; filterState.from=""; filterState.to=""; filterState.category=""; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab==="sites")); state.tab="sites"; renderSiteDetail(id); }
+function openSupplier(id){ state.activeSupplierId = id; filterState.from=""; filterState.to=""; filterState.category=""; advanceForm.supplierId=id; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab==="suppliers")); state.tab="suppliers"; renderSupplierDetail(id); }
+
+/* ================= Filters + CSV export ================= */
+const filterState = { from:"", to:"", category:"" };
+function applyFilter(txns){
+  return txns.filter(t=>{
+    if (filterState.from && t.date < filterState.from) return false;
+    if (filterState.to && t.date > filterState.to) return false;
+    if (filterState.category && t.category !== filterState.category) return false;
+    return true;
+  });
+}
+function filterBarHtml(){
+  const catOpts = '<option value="">सर्व कॅटेगरी</option>' + CATS.map(c=>'<option value="'+c+'" '+(filterState.category===c?"selected":"")+'>'+esc(c)+'</option>').join("");
+  const active = filterState.from || filterState.to || filterState.category;
+  return '<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:14px;">'
+    + '<div><label class="form-label">पासून</label><input class="field" style="margin-bottom:0;" type="date" value="'+filterState.from+'" onchange="filterState.from=this.value; rerenderCurrentTab();"></div>'
+    + '<div><label class="form-label">पर्यंत</label><input class="field" style="margin-bottom:0;" type="date" value="'+filterState.to+'" onchange="filterState.to=this.value; rerenderCurrentTab();"></div>'
+    + '<div><label class="form-label">कॅटेगरी</label><select class="field" style="margin-bottom:0;" onchange="filterState.category=this.value; rerenderCurrentTab();">'+catOpts+'</select></div>'
+    + (active ? '<button class="print-btn" onclick="filterState.from=\'\';filterState.to=\'\';filterState.category=\'\'; rerenderCurrentTab();">✕ फिल्टर काढा</button>' : '')
+    + '</div>';
+}
+function csvEscape(v){ v = (v==null?"":String(v)); if (/[",\n]/.test(v)) v = '"'+v.replace(/"/g,'""')+'"'; return v; }
+function downloadBlob(content, filename, type){
+  const blob = new Blob(["\ufeff"+content], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function exportCSV(txns, filenamePrefix){
+  const headers = ["तारीख","साईट","सप्लायर","कॅटेगरी","साहित्य","प्रमाण","युनिट","टॅक्सेबल","GST%","GST रक्कम","एकूण","मोड","स्टेटस","बिल नं","टाकलं"];
+  const rows = txns.map(t=>{
+    const site = state.sites.find(s=>s.id===t.siteId);
+    const sup = state.suppliers.find(s=>s.id===t.supplierId);
+    return [t.date, site?site.name:"", sup?sup.name:"", t.category, t.itemName||"", t.quantity||"", t.unit||"", t.taxableAmount, t.gstRate, t.gstAmount, t.totalAmount, modeLabel(t.mode), t.status==="paid"?"PAID":"PENDING", t.billNo||"", t.enteredBy].map(csvEscape).join(",");
+  });
+  downloadBlob(headers.join(",")+"\n"+rows.join("\n"), filenamePrefix+"_"+new Date().toISOString().slice(0,10)+".csv", "text/csv;charset=utf-8;");
+}
+
+function showToast(msg){
+  const t = document.getElementById("toast");
+  t.innerHTML = "✓ " + esc(msg);
+  t.classList.remove("hidden");
+  clearTimeout(showToast._tid);
+  showToast._tid = setTimeout(()=>t.classList.add("hidden"), 2200);
+}
+
+/* ================= Section helper ================= */
+function sectionHtml(title, eyebrow, innerHtml, rightHtml){
+  return '<div class="section"><div class="section-head"><div>'+
+    (eyebrow?'<div class="eyebrow">'+esc(eyebrow)+'</div>':'')+
+    '<h2 class="section-title">'+esc(title)+'</h2></div>'+(rightHtml||'')+'</div>'+innerHtml+'</div>';
+}
+function statCard(label, value, colorVar, icon){
+  return '<div class="stat-card" style="border-left:4px solid var('+colorVar+')"><div class="stat-label">'+icon+' '+esc(label)+'</div><div class="stat-value">'+esc(value)+'</div></div>';
+}
+
+/* ================= Dashboard ================= */
+function renderDashboard(){
+  const totals = computeTotals();
+  let html = '<div class="stat-row">'
+    + statCard("एकूण खर्च (GST सह)", inr(totals.total), "--orange", "₹")
+    + statCard("पेंडिंग पेमेंट", inr(totals.pending), "--red", "⏱")
+    + statCard("एकूण GST", inr(totals.totalGst), "--amber", "🧾")
+    + '</div><div class="stat-row" style="margin-bottom:30px;">'
+    + statCard("रोख खर्च", inr(totals.cash), "--steel", "💵")
+    + statCard("बँक/UPI/चेक", inr(totals.bank), "--green", "🏦")
+    + statCard("साईट्स / सप्लायर्स", state.sites.length + " / " + state.suppliers.length, "--steel", "🏗")
+    + '</div>';
+
+  if (state.sites.length===0 || state.suppliers.length===0){
+    html += '<div class="empty-note">सुरुवात करण्यासाठी आधी "सेटअप" मध्ये जाऊन साईट व सप्लायर जोडा, मग "नोंद करा" मधून बिल एंट्री टाका.</div>';
+    document.getElementById("bodyInner").innerHTML = html;
+    return;
+  }
+
+  html += sectionHtml("साईट-वाईज खर्च", "Site Spend", '<div class="chart-box"><canvas id="siteChart"></canvas></div>');
+
+  let supplierListHtml = '<div class="list-panel">';
+  const top6 = totals.perSupplier.slice(0,6);
+  if (top6.every(p=>p.count===0)) supplierListHtml += '<div style="padding:16px;color:var(--sub);font-size:13px;">अजून नोंदी नाहीत</div>';
+  else top6.forEach(p=>{
+    supplierListHtml += '<div class="list-row clickable" onclick="openSupplier(\''+p.supplier.id+'\')"><div><div style="font-weight:600;font-size:13.5px;">'+esc(p.supplier.name)+'</div><div style="font-size:11.5px;color:var(--sub);">'+esc(p.supplier.category)+' · '+p.count+' नोंदी</div></div><div class="font-mono" style="font-weight:600;color:var(--steel);">'+inr(p.amount)+'</div></div>';
+  });
+  supplierListHtml += '</div>';
+
+  html += '<div style="display:flex;gap:20px;flex-wrap:wrap;">'
+    + '<div style="flex:1 1 380px;">' + sectionHtml("टॉप सप्लायर्स","Top Suppliers", supplierListHtml) + '</div>'
+    + '<div style="flex:1 1 300px;">' + sectionHtml("कॅटेगरी-वाईज","By Category", '<div class="chart-box" style="height:240px;"><canvas id="catChart"></canvas></div>') + '</div>'
+    + '</div>';
+
+  document.getElementById("bodyInner").innerHTML = html;
+
+  // charts
+  if (state.charts.site) state.charts.site.destroy();
+  const siteCtx = document.getElementById("siteChart");
+  if (siteCtx) state.charts.site = new Chart(siteCtx, {
+    type: "bar",
+    data: { labels: totals.perSite.map(p=>p.site.name), datasets: [{ label:"खर्च", data: totals.perSite.map(p=>p.amount), backgroundColor:"#E2571C", borderRadius:3 }] },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ ticks:{ callback:v=>inr(v) } } } }
+  });
+  if (state.charts.cat) state.charts.cat.destroy();
+  const catCtx = document.getElementById("catChart");
+  if (catCtx && totals.perCategory.length) state.charts.cat = new Chart(catCtx, {
+    type: "pie",
+    data: { labels: totals.perCategory.map(c=>c.name), datasets: [{ data: totals.perCategory.map(c=>c.value), backgroundColor: PIE_COLORS }] },
+    options: { plugins:{legend:{position:"bottom", labels:{ font:{size:11} } }} }
+  });
+  else if (catCtx) catCtx.parentElement.innerHTML = '<div style="color:var(--sub);font-size:13px;padding:10px;">डेटा नाही</div>';
+}
+
+/* ================= Sites ================= */
+function renderSites(){
+  const totals = computeTotals();
+  let inner = '';
+  if (state.sites.length===0) inner += '<div style="color:var(--sub);font-size:14px;">अजून साईट जोडलेली नाही — "सेटअप" मधून जोडा.</div>';
+  inner += '<div class="grid-cards">';
+  state.sites.forEach(s=>{
+    const t = totals.perSite.find(p=>p.site.id===s.id) || {amount:0,count:0};
+    let budgetBar = '';
+    if (s.budget) {
+      const pct = Math.round(t.amount/s.budget*100);
+      const over = t.amount > s.budget;
+      budgetBar = '<div style="margin-top:8px;"><div style="background:var(--line);border-radius:4px;height:6px;overflow:hidden;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(over?"var(--red)":(pct>85?"var(--amber)":"var(--green)"))+';"></div></div>'
+        + '<div style="font-size:10.5px;color:'+(over?"var(--red)":"var(--sub)")+';margin-top:3px;">बजेट '+inr(s.budget)+' पैकी '+pct+'%'+(over?' — ओलांडलं':'')+'</div></div>';
+    }
+    inner += '<div class="card" style="border-top:3px solid var(--orange);" onclick="openSite(\''+s.id+'\')">'
+      + '<div class="card-title">'+esc(s.name)+'</div><div class="card-sub">'+esc(s.location||"—")+'</div>'
+      + '<div class="card-amount" style="color:var(--steel);">'+inr(t.amount)+'</div><div class="card-count">'+t.count+' नोंदी</div>'+budgetBar+'</div>';
+  });
+  inner += '</div>';
+  document.getElementById("bodyInner").innerHTML = sectionHtml("सर्व साईट्स","Sites", inner);
+}
+
+function renderSiteDetail(siteId){
+  const site = state.sites.find(s=>s.id===siteId);
+  if (!site) { renderSites(); return; }
+  const allSiteTxns = state.txns.filter(t=>t.siteId===site.id);
+  const siteTxns = applyFilter(allSiteTxns).sort((a,b)=> a.date<b.date?1:-1);
+  const bySupplier = {};
+  siteTxns.forEach(t=>{ bySupplier[t.supplierId] = (bySupplier[t.supplierId]||0) + t.totalAmount; });
+  const total = siteTxns.reduce((a,t)=>a+t.totalAmount,0);
+  const actualTotal = allSiteTxns.reduce((a,t)=>a+t.totalAmount,0); // budget vs actual नेहमी फिल्टरशिवाय संपूर्ण गणना
+
+  let chips = '';
+  Object.entries(bySupplier).forEach(([supId, amt])=>{
+    const sup = state.suppliers.find(s=>s.id===supId);
+    chips += '<div class="chip"><b>'+esc(sup?sup.name:"—")+'</b> <span class="amt">'+inr(amt)+'</span></div>';
+  });
+
+  let budgetHtml = '';
+  if (site.budget) {
+    const pct = Math.round(actualTotal/site.budget*100);
+    const over = actualTotal > site.budget;
+    budgetHtml = '<div style="margin-bottom:18px;">'
+      + '<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--sub);margin-bottom:4px;"><span>बजेट: '+inr(site.budget)+' · खर्च: '+inr(actualTotal)+'</span><span style="color:'+(over?"var(--red)":"var(--ink)")+';font-weight:600;">'+pct+'% वापरलं'+(over?' — बजेट ओलांडलं!':'')+'</span></div>'
+      + '<div style="background:var(--line);border-radius:4px;height:10px;overflow:hidden;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(over?"var(--red)":(pct>85?"var(--amber)":"var(--green)"))+';"></div></div>'
+      + '</div>';
+  }
+
+  let html = '<button class="back-btn no-print" onclick="switchTab(\'sites\')">‹ साईट्स</button>'
+    + '<div class="print-only"><div class="font-display" style="font-size:20px;font-weight:700;">कंपनी खर्च नोंदवही</div><div style="font-size:13px;color:#555;">'+esc(site.name)+' — Site Report</div><div style="font-size:11px;color:#888;">प्रिंट तारीख: '+new Date().toLocaleDateString("en-IN")+'</div><hr></div>'
+    + sectionHtml(site.name, site.location || "Site Report",
+        budgetHtml + filterBarHtml() + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">'+chips+'</div>' + txnTableHtml(siteTxns, false),
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="print-btn no-print" onclick="exportCSV(state.txns.filter(t=>t.siteId===\''+site.id+'\'),\''+esc(site.name)+'\')">⬇ Excel (CSV)</button><button class="print-btn no-print" onclick="window.print()">🖨 प्रिंट / PDF सेव्ह करा</button><div class="font-display" style="font-size:22px;font-weight:600;color:var(--orange);">'+inr(total)+'</div></div>'
+      );
+  document.getElementById("bodyInner").innerHTML = html;
+}
+
+/* ================= Suppliers ================= */
+function renderSuppliers(){
+  const totals = computeTotals();
+  let inner = '';
+  if (state.suppliers.length===0) inner += '<div style="color:var(--sub);font-size:14px;">अजून सप्लायर जोडलेला नाही — "सेटअप" मधून जोडा.</div>';
+  inner += '<div class="grid-cards">';
+  state.suppliers.forEach(s=>{
+    const t = totals.perSupplier.find(p=>p.supplier.id===s.id) || {amount:0,count:0};
+    inner += '<div class="card" style="border-top:3px solid var(--steel);" onclick="openSupplier(\''+s.id+'\')">'
+      + '<div class="card-title">'+esc(s.name)+'</div><div class="card-sub" style="text-transform:uppercase;letter-spacing:.05em;">'+esc(s.category)+(s.gstin?' · GSTIN '+esc(s.gstin):'')+'</div>'
+      + '<div class="card-amount" style="color:var(--orange);">'+inr(t.amount)+'</div><div class="card-count">'+t.count+' नोंदी (एकूण, सर्व साईट)</div></div>';
+  });
+  inner += '</div>';
+  document.getElementById("bodyInner").innerHTML = sectionHtml("सर्व सप्लायर्स / कॉन्ट्रॅक्टर्स","Suppliers", inner);
+}
+
+const advanceForm = { supplierId:null, siteId:"", amount:"", date:new Date().toISOString().slice(0,10), mode:"cash", note:"" };
+
+function renderSupplierDetail(supplierId){
+  const supplier = state.suppliers.find(s=>s.id===supplierId);
+  if (!supplier) { renderSuppliers(); return; }
+  const allSupTxns = state.txns.filter(t=>t.supplierId===supplier.id);
+  const supTxns = applyFilter(allSupTxns).sort((a,b)=> a.date<b.date?1:-1);
+  const bySite = {};
+  supTxns.forEach(t=>{ bySite[t.siteId] = (bySite[t.siteId]||0) + t.totalAmount; });
+  const total = supTxns.reduce((a,t)=>a+t.totalAmount,0);
+  const pending = allSupTxns.filter(t=>t.status==="pending").reduce((a,t)=>a+t.totalAmount,0);
+  const gstTotal = supTxns.reduce((a,t)=>a+t.gstAmount,0);
+  const supAdvances = state.advances.filter(a=>a.supplierId===supplier.id);
+  const advanceTotal = supAdvances.reduce((a,x)=>a+x.amount,0);
+  const netPayable = pending - advanceTotal;
+
+  let chips = '';
+  Object.entries(bySite).forEach(([siteId, amt])=>{
+    const site = state.sites.find(s=>s.id===siteId);
+    chips += '<div class="chip"><b>'+esc(site?site.name:"—")+'</b> <span class="amt">'+inr(amt)+'</span></div>';
+  });
+  let flags = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;">';
+  if (pending>0) flags += '<div style="display:flex;align-items:center;gap:6px;color:var(--red);font-size:13px;font-weight:600;">⚠ पेंडिंग बिलं: '+inr(pending)+'</div>';
+  if (advanceTotal>0) flags += '<div style="display:flex;align-items:center;gap:6px;color:var(--steel);font-size:13px;font-weight:600;">💰 दिलेला ॲडव्हान्स: '+inr(advanceTotal)+'</div>';
+  if (advanceTotal>0 || pending>0) flags += '<div style="display:flex;align-items:center;gap:6px;color:'+(netPayable>0?"var(--red)":"var(--green)")+';font-size:13px;font-weight:700;">⚖ निव्वळ देय: '+inr(Math.max(0,netPayable))+(netPayable<0?' (जास्त दिलंय: '+inr(-netPayable)+')':'')+'</div>';
+  if (gstTotal>0) flags += '<div style="display:flex;align-items:center;gap:6px;color:var(--amber);font-size:13px;font-weight:600;">🧾 एकूण GST: '+inr(gstTotal)+'</div>';
+  flags += '</div>';
+
+  // advance mini-form
+  advanceForm.supplierId = supplier.id;
+  if (!advanceForm.siteId) advanceForm.siteId = "";
+  const siteOptsAdv = '<option value="">(कोणतीही साईट नाही)</option>' + state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const advForm = '<div class="form-card" style="max-width:640px;margin-bottom:14px;">'
+    + '<div class="form-grid2"><div><label class="form-label">रक्कम (₹)</label><input class="field" type="number" value="'+advanceForm.amount+'" placeholder="उदा. 20000" oninput="advanceForm.amount=this.value;"></div>'
+    + '<div><label class="form-label">तारीख</label><input class="field" type="date" value="'+advanceForm.date+'" onchange="advanceForm.date=this.value;"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">साईट (ऐच्छिक)</label><select class="field" onchange="advanceForm.siteId=this.value;">'+siteOptsAdv+'</select></div>'
+    + '<div><label class="form-label">मोड</label><select class="field" onchange="advanceForm.mode=this.value;">'+MODES.map(m=>'<option value="'+m.id+'" '+(m.id===advanceForm.mode?"selected":"")+'>'+esc(m.label)+'</option>').join("")+'</select></div></div>'
+    + '<div style="margin-bottom:12px;"><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(advanceForm.note)+'" oninput="advanceForm.note=this.value;"></div>'
+    + '<div id="advErr" class="err-text hidden"></div>'
+    + '<button class="btn-primary" onclick="submitAdvance()">ॲडव्हान्स नोंदवा</button></div>';
+  let advList = '';
+  if (supAdvances.length){
+    supAdvances.forEach(a=>{
+      const site = state.sites.find(s=>s.id===a.siteId);
+      advList += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+inr(a.amount)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(a.date)+(site?' · '+esc(site.name):'')+' · '+esc(modeLabel(a.mode))+(a.note?' · '+esc(a.note):'')+'</span></div><button class="icon-btn" onclick="deleteAdvance(\''+a.id+'\')">🗑</button></div>';
+    });
+  }
+  const advanceSection = sectionHtml("ॲडव्हान्स पेमेंट","Advances Given", advForm + (advList?'<div class="list-panel">'+advList+'</div>':''));
+
+  let html = '<button class="back-btn no-print" onclick="switchTab(\'suppliers\')">‹ सप्लायर्स</button>'
+    + '<div class="print-only"><div class="font-display" style="font-size:20px;font-weight:700;">कंपनी खर्च नोंदवही</div><div style="font-size:13px;color:#555;">'+esc(supplier.name)+' — Overall Supplier Report</div><div style="font-size:11px;color:#888;">प्रिंट तारीख: '+new Date().toLocaleDateString("en-IN")+'</div><hr></div>'
+    + sectionHtml(supplier.name, supplier.category + (supplier.gstin?' · GSTIN '+supplier.gstin:'') + ' · Overall Supplier Report',
+        flags + filterBarHtml() + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">'+chips+'</div>' + txnTableHtml(supTxns, true),
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="print-btn no-print" onclick="exportCSV(state.txns.filter(t=>t.supplierId===\''+supplier.id+'\'),\''+esc(supplier.name)+'\')">⬇ Excel (CSV)</button><button class="print-btn no-print" onclick="window.print()">🖨 प्रिंट / PDF सेव्ह करा</button><div class="font-display" style="font-size:22px;font-weight:600;color:var(--orange);">'+inr(total)+'</div></div>'
+      )
+    + '<div class="no-print">' + advanceSection + '</div>';
+  document.getElementById("bodyInner").innerHTML = html;
+}
+async function submitAdvance(){
+  const errEl = document.getElementById("advErr");
+  if (!advanceForm.amount || Number(advanceForm.amount)<=0){ errEl.textContent="योग्य रक्कम भरा."; errEl.classList.remove("hidden"); return; }
+  try {
+    await addAdvance(advanceForm);
+    advanceForm.amount=""; advanceForm.note="";
+    renderSupplierDetail(advanceForm.supplierId);
+  } catch(e) {}
+}
+
+/* ================= Transaction table ================= */
+function txnTableHtml(txns, showSite){
+  if (txns.length===0) return '<div style="color:var(--sub);font-size:13.5px;padding:12px;">नोंदी नाहीत.</div>';
+  let rows = '';
+  txns.forEach(t=>{
+    const name = showSite ? ((state.sites.find(s=>s.id===t.siteId)||{}).name || "—") : ((state.suppliers.find(s=>s.id===t.supplierId)||{}).name || "—");
+    rows += '<div class="txn-row">'
+      + '<div class="font-mono" style="color:var(--sub);font-size:11.5px;">'+esc(t.date)+'</div>'
+      + '<div class="name">'+esc(name)+(t.billNo?'<div class="meta">बिल: '+esc(t.billNo)+'</div>':'')+(t.itemName?'<div class="meta">📦 '+esc(t.itemName)+(t.quantity?' · '+t.quantity+' '+esc(t.unit||""):'')+'</div>':'')+'<div class="meta">टाकलं: '+esc(t.enteredBy)+'</div></div>'
+      + '<div style="color:var(--sub);font-size:11.5px;">'+esc(t.category)+'</div>'
+      + '<div style="color:var(--sub);font-size:11.5px;">'+esc(modeLabel(t.mode))+'</div>'
+      + '<div class="right">'+inr(t.taxableAmount)+'</div>'
+      + '<div class="right" style="color:var(--amber);font-size:11.5px;">'+(t.gstRate? t.gstRate+'% '+inr(t.gstAmount) : "—")+'</div>'
+      + '<div class="right" style="font-weight:600;">'+inr(t.totalAmount)+'</div>'
+      + '<div>'
+      + '<span class="stamp '+(t.status==="pending"?"pending":"")+'">'+(t.status==="paid"?"PAID ✓":"PENDING")+'</span>'
+      + (t.status==="pending" ? ' <button class="icon-btn no-print" title="PAID करा" style="color:var(--green);font-weight:700;" onclick="markPaid(\''+t.id+'\')">✓ PAID करा</button>' : '')
+      + '</div>'
+      + '<button class="icon-btn no-print" onclick="deleteTxn(\''+t.id+'\')">🗑</button>'
+      + '</div>';
+  });
+  return '<div class="txn-table-wrap"><div class="txn-table">'
+    + '<div class="txn-head"><div>तारीख</div><div>'+(showSite?"साईट":"सप्लायर")+'</div><div>कॅटेगरी</div><div>मोड</div>'
+    + '<div class="right">टॅक्सेबल</div><div class="right">GST</div><div class="right">एकूण</div><div>स्टेटस</div><div class="no-print"></div></div>'
+    + rows + '</div></div>';
+}
+
+/* ================= Add entry ================= */
+const addForm = { siteId:null, supplierId:null, category: CATS[0], taxableAmount:"", gstRate:0, billNo:"", date:new Date().toISOString().slice(0,10), status:"paid", mode:"cash", itemName:"", quantity:"", unit:"" };
+
+function renderAddEntry(){
+  if (state.sites.length===0 || state.suppliers.length===0){
+    document.getElementById("bodyInner").innerHTML = sectionHtml("नवीन बिल / नोंद","Add Entry",
+      '<div class="empty-note">नोंद करण्याआधी आधी "सेटअप" मध्ये किमान एक साईट व एक सप्लायर जोडा.</div>');
+    return;
+  }
+  if (!addForm.siteId) addForm.siteId = state.sites[0].id;
+  if (!addForm.supplierId) addForm.supplierId = state.suppliers[0].id;
+
+  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const supOpts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===addForm.category?"selected":"")+'>'+esc(c)+'</option>').join("");
+  const gstPills = GST_RATES.map(r=>'<button type="button" class="pill '+(addForm.gstRate===r?"active-amber":"")+'" onclick="setGstRate('+r+')">'+(r===0?"नाही":r+"%")+'</button>').join("");
+  const modeBtns = MODES.map(m=>'<button type="button" class="mode-btn '+(addForm.mode===m.id?"active":"")+'" onclick="setMode(\''+m.id+'\')">'+esc(m.label)+'</button>').join("");
+
+  const gstAmount = addForm.taxableAmount ? Math.round(Number(addForm.taxableAmount) * addForm.gstRate / 100) : 0;
+  const totalAmount = (Number(addForm.taxableAmount)||0) + gstAmount;
+  const gstPreview = addForm.taxableAmount > 0 ? '<div style="margin-top:8px;font-size:12.5px;color:var(--sub);" class="font-mono">GST: '+inr(gstAmount)+' · <span style="color:var(--ink);font-weight:600;">एकूण: '+inr(totalAmount)+'</span></div>' : '';
+
+  const html = '<div class="form-card">'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" id="f_site" onchange="addForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">सप्लायर / कॉन्ट्रॅक्टर</label><select class="field" id="f_sup" onchange="addForm.supplierId=this.value">'+supOpts+'</select></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">कॅटेगरी</label><select class="field" onchange="addForm.category=this.value">'+catOpts+'</select></div>'
+    + '<div><label class="form-label">तारीख</label><input class="field" type="date" value="'+addForm.date+'" onchange="addForm.date=this.value"></div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">टॅक्सेबल रक्कम (₹)</label><input class="field" type="number" id="f_amount" value="'+addForm.taxableAmount+'" placeholder="उदा. 12500" oninput="addForm.taxableAmount=this.value; updateGstPreview();"></div>'
+    + '<div><label class="form-label">बिल नंबर (ऐच्छिक)</label><input class="field" value="'+esc(addForm.billNo)+'" placeholder="उदा. INV-204" oninput="addForm.billNo=this.value;"></div></div>'
+    + '<div class="form-grid2" style="grid-template-columns:1.4fr 1fr .8fr;">'
+    + '<div><label class="form-label">साहित्याचं नाव (स्टॉकसाठी, ऐच्छिक)</label><input class="field" list="commonItemList" id="f_itemname" value="'+esc(addForm.itemName)+'" placeholder="उदा. सिमेंट OPC 53 (टाईप करा, यादीतून निवडा)" oninput="addForm.itemName=this.value; handleItemInput(addForm,\'f_itemname\',\'f_unit\');"></div>'
+    + '<div><label class="form-label">प्रमाण</label><input class="field" type="number" value="'+addForm.quantity+'" placeholder="उदा. 50" oninput="addForm.quantity=this.value;"></div>'
+    + '<div><label class="form-label">युनिट</label><input class="field" list="unitList" id="f_unit" value="'+esc(addForm.unit)+'" placeholder="bags" oninput="addForm.unit=this.value;"></div>'
+    + '</div>'
+    + buildItemDatalist("commonItemList")
+    + '<datalist id="unitList">'+UNITS.map(u=>'<option value="'+u+'">').join("")+'</datalist>'
+    + '<div style="font-size:11.5px;color:var(--sub);margin:-8px 0 14px 0;">टीप: फक्त मटेरियल खरेदीसाठी भरा — यामुळे "स्टॉक" टॅबमध्ये किती साहित्य शिल्लक आहे ते आपोआप दिसेल.</div>'
+    + '<div style="margin-bottom:14px;"><label class="form-label">GST दर</label><div class="pill-row">'+gstPills+'</div><div id="gstPreviewBox">'+gstPreview+'</div></div>'
+    + '<div style="margin-bottom:14px;"><label class="form-label">पेमेंट मोड</label><div class="mode-grid">'+modeBtns+'</div></div>'
+    + '<div style="margin-bottom:18px;"><label class="form-label">पेमेंट स्टेटस</label><div class="status-row">'
+    + '<button type="button" class="status-btn '+(addForm.status==="paid"?"paid-active":"")+'" onclick="setStatus(\'paid\')">PAID</button>'
+    + '<button type="button" class="status-btn '+(addForm.status==="pending"?"pending-active":"")+'" onclick="setStatus(\'pending\')">PENDING</button></div></div>'
+    + '<div id="addErr" class="err-text hidden"></div>'
+    + '<button class="btn-primary" onclick="submitTxn()">नोंद जतन करा</button>'
+    + '</div>';
+  document.getElementById("bodyInner").innerHTML = sectionHtml("नवीन बिल / नोंद","Add Entry", html);
+}
+function updateGstPreview(){
+  const gstAmount = addForm.taxableAmount ? Math.round(Number(addForm.taxableAmount) * addForm.gstRate / 100) : 0;
+  const totalAmount = (Number(addForm.taxableAmount)||0) + gstAmount;
+  const box = document.getElementById("gstPreviewBox");
+  if (!box) return;
+  box.innerHTML = addForm.taxableAmount > 0
+    ? '<div style="margin-top:8px;font-size:12.5px;color:var(--sub);" class="font-mono">GST: '+inr(gstAmount)+' · <span style="color:var(--ink);font-weight:600;">एकूण: '+inr(totalAmount)+'</span></div>'
+    : '';
+}
+function setGstRate(r){ addForm.gstRate = r; renderAddEntry(); const el=document.getElementById("f_amount"); if(el) el.focus(); }
+function setMode(m){ addForm.mode = m; renderAddEntry(); }
+function setStatus(s){ addForm.status = s; renderAddEntry(); }
+async function submitTxn(){
+  const errEl = document.getElementById("addErr");
+  if (!addForm.siteId || !addForm.supplierId || !addForm.taxableAmount || Number(addForm.taxableAmount)<=0){
+    errEl.textContent = "साईट, सप्लायर व योग्य रक्कम भरा."; errEl.classList.remove("hidden"); return;
+  }
+  const gstAmount = Math.round(Number(addForm.taxableAmount) * addForm.gstRate / 100);
+  const totalAmount = Number(addForm.taxableAmount) + gstAmount;
+  try {
+    await addTxn({ siteId:addForm.siteId, supplierId:addForm.supplierId, category:addForm.category, taxableAmount:Number(addForm.taxableAmount), gstRate:addForm.gstRate, gstAmount, totalAmount, billNo:addForm.billNo, date:addForm.date, status:addForm.status, mode:addForm.mode, itemName:addForm.itemName, quantity:addForm.quantity, unit:addForm.unit });
+    addForm.taxableAmount = ""; addForm.billNo = ""; addForm.itemName = ""; addForm.quantity = "";
+    switchTab("dashboard");
+  } catch(e) {}
+}
+
+/* ================= Setup ================= */
+const setupForm = { siteName:"", siteLoc:"", siteBudget:"", supName:"", supCat:CATS[0], supContact:"", supGstin:"" };
+function renderSetup(){
+  const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===setupForm.supCat?"selected":"")+'>'+esc(c)+'</option>').join("");
+  let siteRows = '';
+  state.sites.forEach((s,i)=>{
+    siteRows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(s.name)+'</span> <span style="font-size:12px;color:var(--sub);">'+(s.location?'· '+esc(s.location):'')+(s.budget?' · बजेट '+inr(s.budget):'')+'</span></div><button class="icon-btn" onclick="deleteSite(\''+s.id+'\')">✕</button></div>';
+  });
+  let supRows = '';
+  state.suppliers.forEach(s=>{
+    supRows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(s.name)+'</span> <span style="font-size:12px;color:var(--sub);">· '+esc(s.category)+(s.gstin?' · '+esc(s.gstin):'')+'</span></div><button class="icon-btn" onclick="deleteSupplier(\''+s.id+'\')">✕</button></div>';
+  });
+
+  const html = sectionHtml("साईट जोडा","New Site",
+      '<div class="form-card" style="margin-bottom:12px;">'
+      + '<input class="field" placeholder="साईटचं नाव (उदा. रिव्हरसाईड टॉवर)" value="'+esc(setupForm.siteName)+'" oninput="setupForm.siteName=this.value;">'
+      + '<input class="field" placeholder="लोकेशन (ऐच्छिक)" value="'+esc(setupForm.siteLoc)+'" oninput="setupForm.siteLoc=this.value;">'
+      + '<input class="field" type="number" placeholder="अंदाजे बजेट ₹ (ऐच्छिक)" value="'+esc(setupForm.siteBudget)+'" oninput="setupForm.siteBudget=this.value;">'
+      + '<button class="small-btn" style="background:var(--steel);" onclick="submitSite()">＋ साईट जोडा</button></div>'
+      + (state.sites.length? '<div class="list-panel">'+siteRows+'</div>' : '')
+    )
+    + sectionHtml("सप्लायर / कॉन्ट्रॅक्टर जोडा","New Supplier",
+      '<div class="form-card" style="margin-bottom:12px;">'
+      + '<input class="field" placeholder="नाव" value="'+esc(setupForm.supName)+'" oninput="setupForm.supName=this.value;">'
+      + '<select class="field" onchange="setupForm.supCat=this.value">'+catOpts+'</select>'
+      + '<input class="field" placeholder="कॉन्टॅक्ट नंबर (ऐच्छिक)" value="'+esc(setupForm.supContact)+'" oninput="setupForm.supContact=this.value;">'
+      + '<input class="field" placeholder="GSTIN (ऐच्छिक)" value="'+esc(setupForm.supGstin)+'" oninput="setupForm.supGstin=this.value;">'
+      + '<button class="small-btn" style="background:var(--orange);" onclick="submitSupplier()">＋ सप्लायर जोडा</button></div>'
+      + (state.suppliers.length? '<div class="list-panel">'+supRows+'</div>' : '')
+    );
+  document.getElementById("bodyInner").innerHTML = html;
+}
+function submitSite(){ addSite(setupForm.siteName, setupForm.siteLoc, setupForm.siteBudget); setupForm.siteName=""; setupForm.siteLoc=""; setupForm.siteBudget=""; }
+function submitSupplier(){ addSupplier(setupForm.supName, setupForm.supCat, setupForm.supContact, setupForm.supGstin); setupForm.supName=""; setupForm.supContact=""; setupForm.supGstin=""; }
+
+/* ================= Stock ================= */
+const usageForm = { siteId:null, itemName:"", quantity:"", unit:"", date:new Date().toISOString().slice(0,10), note:"" };
+
+function computeStock(){
+  // { siteId: { normItemKey: {display, unit, purchased, used} } }
+  const map = {};
+  state.txns.forEach(t=>{
+    if (!t.itemName || !t.quantity) return;
+    const key = normItem(t.itemName);
+    map[t.siteId] = map[t.siteId] || {};
+    map[t.siteId][key] = map[t.siteId][key] || { display:t.itemName, unit:t.unit||"", purchased:0, used:0 };
+    map[t.siteId][key].purchased += Number(t.quantity);
+    if (t.unit) map[t.siteId][key].unit = t.unit;
+  });
+  state.usage.forEach(u=>{
+    const key = normItem(u.itemName);
+    map[u.siteId] = map[u.siteId] || {};
+    map[u.siteId][key] = map[u.siteId][key] || { display:u.itemName, unit:u.unit||"", purchased:0, used:0 };
+    map[u.siteId][key].used += Number(u.quantity);
+    if (u.unit && !map[u.siteId][key].unit) map[u.siteId][key].unit = u.unit;
+  });
+  return map;
+}
+
+function renderStock(){
+  if (state.sites.length===0){
+    document.getElementById("bodyInner").innerHTML = sectionHtml("स्टॉक","Inventory", '<div class="empty-note">आधी "सेटअप" मध्ये किमान एक साईट जोडा.</div>');
+    return;
+  }
+  if (!usageForm.siteId) usageForm.siteId = state.sites[0].id;
+  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===usageForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+
+  // known item names for datalist suggestions (common list + anything already purchased)
+  const purchasedNames = []; state.txns.forEach(t=>{ if (t.itemName) purchasedNames.push(t.itemName); });
+  const itemDatalist = buildItemDatalist("itemList", purchasedNames);
+
+  const formHtml = '<div class="form-card" style="max-width:640px;">'
+    + '<div class="form-grid2"><div><label class="form-label">साईट</label><select class="field" onchange="usageForm.siteId=this.value">'+siteOpts+'</select></div>'
+    + '<div><label class="form-label">तारीख</label><input class="field" type="date" value="'+usageForm.date+'" onchange="usageForm.date=this.value"></div></div>'
+    + '<div class="form-grid2" style="grid-template-columns:1.4fr 1fr .8fr;">'
+    + '<div><label class="form-label">साहित्याचं नाव</label><input class="field" list="itemList" id="u_itemname" value="'+esc(usageForm.itemName)+'" placeholder="उदा. सिमेंट OPC 53 (टाईप करा, यादीतून निवडा)" oninput="usageForm.itemName=this.value; handleItemInput(usageForm,\'u_itemname\',\'u_unit\');"></div>'
+    + '<div><label class="form-label">वापरलेलं प्रमाण</label><input class="field" type="number" value="'+usageForm.quantity+'" placeholder="उदा. 20" oninput="usageForm.quantity=this.value;"></div>'
+    + '<div><label class="form-label">युनिट</label><input class="field" list="unitList2" id="u_unit" value="'+esc(usageForm.unit)+'" placeholder="bags" oninput="usageForm.unit=this.value;"></div>'
+    + '</div>' + itemDatalist + '<datalist id="unitList2">'+UNITS.map(u=>'<option value="'+u+'">').join("")+'</datalist>'
+    + '<div style="margin-bottom:14px;"><label class="form-label">टीप (ऐच्छिक)</label><input class="field" value="'+esc(usageForm.note)+'" placeholder="उदा. फाउंडेशन कामासाठी वापरलं" oninput="usageForm.note=this.value;"></div>'
+    + '<div id="usageErr" class="err-text hidden"></div>'
+    + '<button class="btn-primary" onclick="submitUsage()">वापर नोंदवा</button>'
+    + '</div>';
+
+  const stock = computeStock();
+  let balanceHtml = '';
+  state.sites.forEach(site=>{
+    const items = stock[site.id];
+    if (!items || Object.keys(items).length===0) return;
+    let rows = '';
+    Object.values(items).forEach(it=>{
+      const balance = it.purchased - it.used;
+      const color = balance < 0 ? "var(--red)" : (balance === 0 ? "var(--sub)" : "var(--green)");
+      rows += '<div class="list-row"><div style="flex:1;">'
+        + '<span style="font-weight:600;font-size:13.5px;">'+esc(it.display)+'</span> '
+        + '<span style="font-size:11.5px;color:var(--sub);">खरेदी: '+it.purchased+' '+esc(it.unit)+' · वापर: '+it.used+' '+esc(it.unit)+'</span></div>'
+        + '<div class="font-mono" style="font-weight:700;color:'+color+';">'+balance+' '+esc(it.unit)+' शिल्लक</div></div>';
+    });
+    balanceHtml += '<div style="margin-bottom:18px;"><div style="font-weight:600;font-size:14px;color:var(--ink);margin-bottom:6px;">'+esc(site.name)+'</div><div class="list-panel">'+rows+'</div></div>';
+  });
+  if (!balanceHtml) balanceHtml = '<div class="empty-note">अजून कोणत्याही साहित्याची खरेदी/वापर नोंद नाही. "नोंद करा" मध्ये बिल टाकताना साहित्याचं नाव व प्रमाण भरा, मग इथे स्टॉक दिसेल.</div>';
+
+  let usageLog = '';
+  const recent = state.usage.slice(0, 15);
+  if (recent.length){
+    recent.forEach(u=>{
+      const site = state.sites.find(s=>s.id===u.siteId);
+      usageLog += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(u.itemName)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(site?site.name:"—")+' · '+u.quantity+' '+esc(u.unit)+' · '+esc(u.date)+(u.note?' · '+esc(u.note):'')+'</span></div><button class="icon-btn" onclick="deleteUsage(\''+u.id+'\')">🗑</button></div>';
+    });
+  }
+
+  const html = sectionHtml("साहित्य वापरलं म्हणून नोंदवा","Record Usage", formHtml)
+    + sectionHtml("साईट-वाईज शिल्लक स्टॉक","Stock Balance (Purchased − Used)", balanceHtml)
+    + (usageLog ? sectionHtml("अलीकडचे वापर","Recent Usage", '<div class="list-panel">'+usageLog+'</div>') : '');
+  document.getElementById("bodyInner").innerHTML = html;
+}
+
+async function submitUsage(){
+  const errEl = document.getElementById("usageErr");
+  if (!usageForm.siteId || !usageForm.itemName.trim() || !usageForm.quantity || Number(usageForm.quantity)<=0){
+    errEl.textContent = "साईट, साहित्याचं नाव व योग्य प्रमाण भरा."; errEl.classList.remove("hidden"); return;
+  }
+  try {
+    await addUsage({ siteId:usageForm.siteId, itemName:usageForm.itemName, quantity:usageForm.quantity, unit:usageForm.unit, date:usageForm.date, note:usageForm.note });
+    usageForm.itemName=""; usageForm.quantity=""; usageForm.note="";
+    renderStock();
+  } catch(e) {}
+}
+</script>
+</body>
+</html>
