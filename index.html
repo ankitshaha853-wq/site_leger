@@ -162,6 +162,11 @@ input:focus, select:focus{ outline:none; border-color:var(--orange); box-shadow:
   .form-grid2{ grid-template-columns:1fr !important; }
   .txn-head, .txn-row{ font-size:11px; }
 }
+/* member-mode: hide/disable edit-delete controls for non-admin users (server RLS also enforces this) */
+body.member-mode .icon-btn{ opacity:.3; pointer-events:none; }
+body.member-mode .owner-badge{ display:none; }
+.role-badge{ display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:10px; background:#F0EAD9; color:var(--sub); margin-left:6px; }
+body.member-mode .role-badge.owner-only-badge{ display:none; }
 </style>
 </head>
 <body>
@@ -217,7 +222,8 @@ const STR = {
   typeAdvance:{mr:"ॲडव्हान्स (सप्लायरला)",en:"Advance to Supplier"}, typeReceipt:{mr:"ग्राहक पावती",en:"Customer Receipt"},
   typeRa:{mr:"RA बिल (कॉन्ट्रॅक्टर)",en:"RA Bill (Contractor)"}, typeMach:{mr:"मशिनरी/व्हेईकल भाडं",en:"Machinery/Vehicle Rent"},
   typeLabor:{mr:"मजूर हजेरी",en:"Labor Attendance"},
-  mastersSites:{mr:"साईट्स",en:"Sites"}, mastersSuppliers:{mr:"सप्लायर्स/कॉन्ट्रॅक्टर्स",en:"Suppliers/Contractors"},
+  mastersSites:{mr:"साईट्स",en:"Sites"}, mastersSuppliers:{mr:"सप्लायर्स (मटेरियल)",en:"Suppliers (Material)"}, mastersContractors:{mr:"कॉन्ट्रॅक्टर्स (काम)",en:"Contractors (Work)"},
+  reportContractors:{mr:"कॉन्ट्रॅक्टर रिपोर्ट",en:"Contractor Report"}, partyNone:{mr:"थेट खर्च (कोणीही नाही)",en:"Direct expense (none)"}, partySupplier:{mr:"सप्लायर (मटेरियल)",en:"Supplier (Material)"}, partyContractor:{mr:"कॉन्ट्रॅक्टर (काम)",en:"Contractor (Work)"},
   mastersUnits:{mr:"युनिट्स (फ्लॅट्स)",en:"Units (Flats)"}, mastersCustomers:{mr:"कस्टमर्स/बुकिंग",en:"Customers/Bookings"},
   mastersWork:{mr:"कामाचे प्रकार",en:"Work Items"}, mastersDocs:{mr:"डॉक्युमेंट्स",en:"Documents"},
   reportDashboard:{mr:"ओव्हरव्ह्यू",en:"Overview"}, reportSites:{mr:"साईट रिपोर्ट",en:"Site Report"}, reportSuppliers:{mr:"सप्लायर रिपोर्ट",en:"Supplier Report"},
@@ -366,7 +372,8 @@ const normItem = s => (s||"").trim().toLowerCase();
 /* ================= State ================= */
 const state = {
   session:null, authMode:"login",
-  sites:[], suppliers:[], txns:[], profiles:{}, usage:[], advances:[], units:[], customers:[], receipts:[], workItems:[], raBills:[], machinery:[], labor:[], documents:[],
+  sites:[], suppliers:[], contractors:[], txns:[], profiles:{}, usage:[], advances:[], units:[], customers:[], receipts:[], workItems:[], raBills:[], machinery:[], labor:[], documents:[],
+  myRole:"member",
   tab:"dashboard", masterTab:"sites", reportTab:"sites", entryType:"purchase",
   activeSiteId:null, activeSupplierId:null, activeCustomerId:null, activeWorkId:null,
 };
@@ -423,14 +430,15 @@ function logout(){
 /* ================= Mapping ================= */
 function mapSite(r){ return { id:r.id, name:r.name, location:r.location, budget: r.budget!=null ? Number(r.budget) : null }; }
 function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin }; }
+function mapContractor(r){ return { id:r.id, name:r.name, workType:r.work_type, contact:r.contact, gstin:r.gstin }; }
 function mapTxn(r, profMap){
-  return { id:r.id, siteId:r.site_id, supplierId:r.supplier_id, category:r.category,
+  return { id:r.id, siteId:r.site_id, supplierId:r.supplier_id, contractorId:r.contractor_id, partyType:r.party_type || (r.supplier_id?"supplier":(r.contractor_id?"contractor":"none")), category:r.category,
     taxableAmount:Number(r.taxable_amount||0), gstRate:Number(r.gst_rate||0), gstAmount:Number(r.gst_amount||0), totalAmount:Number(r.total_amount||0),
     billNo:r.bill_no, date:r.txn_date, status:r.status, mode:r.mode, itemName:r.item_name||"", quantity: r.quantity!=null?Number(r.quantity):null, unit:r.unit||"",
     enteredBy:(profMap && profMap[r.entered_by]) || "—" };
 }
 function mapUsage(r){ return { id:r.id, siteId:r.site_id, itemName:r.item_name, quantity:Number(r.quantity||0), unit:r.unit||"", date:r.usage_date, note:r.note||"", value:r.value!=null?Number(r.value):null }; }
-function mapAdvance(r){ return { id:r.id, supplierId:r.supplier_id, siteId:r.site_id, amount:Number(r.amount||0), date:r.adv_date, mode:r.mode, note:r.note||"" }; }
+function mapAdvance(r){ return { id:r.id, supplierId:r.supplier_id, contractorId:r.contractor_id, partyType:r.party_type || (r.supplier_id?"supplier":"contractor"), siteId:r.site_id, amount:Number(r.amount||0), date:r.adv_date, mode:r.mode, note:r.note||"" }; }
 function mapUnit(r){ return { id:r.id, siteId:r.site_id, unitNo:r.unit_no, unitType:r.unit_type, area:r.area_sqft!=null?Number(r.area_sqft):null, price:r.price!=null?Number(r.price):null, status:r.status }; }
 function mapCustomer(r){ return { id:r.id, unitId:r.unit_id, name:r.name, contact:r.contact, email:r.email, bookingDate:r.booking_date, agreementValue:Number(r.agreement_value||0), note:r.note||"" }; }
 function mapReceipt(r){ return { id:r.id, customerId:r.customer_id, amount:Number(r.amount||0), date:r.receipt_date, mode:r.mode, note:r.note||"" }; }
@@ -444,11 +452,12 @@ function mapDocument(r){ return { id:r.id, siteId:r.site_id, docName:r.doc_name,
 async function loadAll(){
   const token = state.session.access_token;
   try {
-    const [s, sup, t, profRows, use, adv, u, cust, rcpt, wi, ra, mach, lab, docs] = await Promise.all([
+    const [s, sup, con, t, profRows, use, adv, u, cust, rcpt, wi, ra, mach, lab, docs] = await Promise.all([
       sb("/rest/v1/sites?select=*&order=created_at.asc", {token}),
       sb("/rest/v1/suppliers?select=*&order=created_at.asc", {token}),
+      sb("/rest/v1/contractors?select=*&order=created_at.asc", {token}).catch(()=>[]),
       sb("/rest/v1/transactions?select=*&order=txn_date.desc", {token}),
-      sb("/rest/v1/profiles?select=id,full_name", {token}),
+      sb("/rest/v1/profiles?select=id,full_name,role", {token}),
       sb("/rest/v1/material_usage?select=*&order=usage_date.desc", {token}).catch(()=>[]),
       sb("/rest/v1/advances?select=*&order=adv_date.desc", {token}).catch(()=>[]),
       sb("/rest/v1/units?select=*&order=created_at.asc", {token}).catch(()=>[]),
@@ -462,47 +471,54 @@ async function loadAll(){
     ]);
     const profMap = {}; (profRows||[]).forEach(p=>{ profMap[p.id]=p.full_name; });
     state.profiles = profMap;
-    state.sites = (s||[]).map(mapSite); state.suppliers = (sup||[]).map(mapSupplier); state.txns = (t||[]).map(r=>mapTxn(r, profMap));
+    const myProfile = (profRows||[]).find(p=>p.id===state.session.user.id);
+    state.myRole = (myProfile && myProfile.role) || "member";
+    document.body.classList.toggle("member-mode", state.myRole !== "owner");
+    state.sites = (s||[]).map(mapSite); state.suppliers = (sup||[]).map(mapSupplier); state.contractors = (con||[]).map(mapContractor); state.txns = (t||[]).map(r=>mapTxn(r, profMap));
     state.usage = (use||[]).map(mapUsage); state.advances = (adv||[]).map(mapAdvance);
     state.units = (u||[]).map(mapUnit); state.customers = (cust||[]).map(mapCustomer); state.receipts = (rcpt||[]).map(mapReceipt);
     state.workItems = (wi||[]).map(mapWorkItem); state.raBills = (ra||[]).map(mapRaBill);
     state.machinery = (mach||[]).map(mapMachinery); state.labor = (lab||[]).map(mapLabor); state.documents = (docs||[]).map(mapDocument);
-    document.getElementById("meName").textContent = "👤 " + ((state.session.user.user_metadata||{}).full_name || state.session.user.email);
+    document.getElementById("meName").textContent = (state.myRole==="owner"?"👑 ":"👤 ") + ((state.session.user.user_metadata||{}).full_name || state.session.user.email);
   } catch(e) { showToast("डेटा लोड करताना त्रुटी: " + e.message); }
 }
+function isOwner(){ return state.myRole === "owner"; }
+function ownerGuard(){ if(!isOwner()){ showToast(LANG==="en"?"Only Admin can edit/delete":"फक्त ॲडमिनला एडिट/डिलीट करण्याची परवानगी आहे"); return false; } return true; }
 const persist = async () => {};
 
 async function addSite(name, location, budget){ if (!name.trim()) return; try { const rows=await sb("/rest/v1/sites",{method:"POST",token:state.session.access_token,body:[{name:name.trim(),location:location.trim(),budget:budget?Number(budget):null}]}); state.sites.push(mapSite(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteSite(id){ try { await sb("/rest/v1/sites?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.sites=state.sites.filter(s=>s.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteSite(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/sites?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.sites=state.sites.filter(s=>s.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addSupplier(name, category, contact, gstin){ if (!name.trim()) return; try { const rows=await sb("/rest/v1/suppliers",{method:"POST",token:state.session.access_token,body:[{name:name.trim(),category,contact:contact.trim(),gstin:gstin.trim()}]}); state.suppliers.push(mapSupplier(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteSupplier(id){ try { await sb("/rest/v1/suppliers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.suppliers=state.suppliers.filter(s=>s.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function addTxn(tx){ try { const body=[{ site_id:tx.siteId, supplier_id:tx.supplierId||null, category:tx.category, taxable_amount:tx.taxableAmount, gst_rate:tx.gstRate, gst_amount:tx.gstAmount, total_amount:tx.totalAmount, bill_no:tx.billNo, txn_date:tx.date, status:tx.status, mode:tx.mode, entered_by:state.session.user.id, item_name:tx.itemName||null, quantity:tx.quantity?Number(tx.quantity):null, unit:tx.unit||null }]; const rows=await sb("/rest/v1/transactions",{method:"POST",token:state.session.access_token,body}); state.txns.unshift(mapTxn(rows[0],state.profiles)); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteTxn(id){ try { await sb("/rest/v1/transactions?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.txns=state.txns.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function markPaid(id){ if(!confirm("PAID करायचं का?")) return; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const x=state.txns.find(t=>t.id===id); if(x) x.status="paid"; showToast("PAID केलं"); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteSupplier(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/suppliers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.suppliers=state.suppliers.filter(s=>s.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function addContractor(name, workType, contact, gstin){ if (!name.trim()) return; try { const rows=await sb("/rest/v1/contractors",{method:"POST",token:state.session.access_token,body:[{name:name.trim(),work_type:workType,contact:contact.trim(),gstin:gstin.trim()}]}); state.contractors.push(mapContractor(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteContractor(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/contractors?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.contractors=state.contractors.filter(c=>c.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function addTxn(tx){ try { const body=[{ site_id:tx.siteId, supplier_id:tx.partyType==="supplier"?tx.supplierId||null:null, contractor_id:tx.partyType==="contractor"?tx.contractorId||null:null, party_type:tx.partyType||"none", category:tx.category, taxable_amount:tx.taxableAmount, gst_rate:tx.gstRate, gst_amount:tx.gstAmount, total_amount:tx.totalAmount, bill_no:tx.billNo, txn_date:tx.date, status:tx.status, mode:tx.mode, entered_by:state.session.user.id, item_name:tx.itemName||null, quantity:tx.quantity?Number(tx.quantity):null, unit:tx.unit||null }]; const rows=await sb("/rest/v1/transactions",{method:"POST",token:state.session.access_token,body}); state.txns.unshift(mapTxn(rows[0],state.profiles)); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
+async function deleteTxn(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.txns=state.txns.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function markPaid(id){ if(!ownerGuard()) return; if(!confirm("PAID करायचं का?")) return; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const x=state.txns.find(t=>t.id===id); if(x) x.status="paid"; showToast("PAID केलं"); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addUsage(u){ try { const body=[{ site_id:u.siteId, item_name:u.itemName.trim(), quantity:Number(u.quantity), unit:u.unit||null, usage_date:u.date, note:u.note||null, value:u.value?Number(u.value):null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/material_usage",{method:"POST",token:state.session.access_token,body}); state.usage.unshift(mapUsage(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteUsage(id){ try { await sb("/rest/v1/material_usage?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.usage=state.usage.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function addAdvance(a){ try { const body=[{ supplier_id:a.supplierId, site_id:a.siteId||null, amount:Number(a.amount), adv_date:a.date, mode:a.mode, note:a.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/advances",{method:"POST",token:state.session.access_token,body}); state.advances.unshift(mapAdvance(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteAdvance(id){ try { await sb("/rest/v1/advances?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.advances=state.advances.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteUsage(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/material_usage?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.usage=state.usage.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function addAdvance(a){ try { const body=[{ supplier_id:a.partyType==="contractor"?null:(a.supplierId||null), contractor_id:a.partyType==="contractor"?(a.contractorId||null):null, party_type:a.partyType||"supplier", site_id:a.siteId||null, amount:Number(a.amount), adv_date:a.date, mode:a.mode, note:a.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/advances",{method:"POST",token:state.session.access_token,body}); state.advances.unshift(mapAdvance(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
+async function deleteAdvance(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/advances?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.advances=state.advances.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addUnit(u){ try { const body=[{ site_id:u.siteId, unit_no:u.unitNo.trim(), unit_type:u.unitType||null, area_sqft:u.area?Number(u.area):null, price:u.price?Number(u.price):null, status:"available" }]; const rows=await sb("/rest/v1/units",{method:"POST",token:state.session.access_token,body}); state.units.push(mapUnit(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteUnit(id){ try { await sb("/rest/v1/units?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.units=state.units.filter(u=>u.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function setUnitStatus(id,status){ try { await sb("/rest/v1/units?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status}}); const u=state.units.find(x=>x.id===id); if(u) u.status=status; renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteUnit(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/units?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.units=state.units.filter(u=>u.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function setUnitStatus(id,status){ if(!ownerGuard()) return; try { await sb("/rest/v1/units?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status}}); const u=state.units.find(x=>x.id===id); if(u) u.status=status; renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addCustomer(c){ try { const body=[{ unit_id:c.unitId||null, name:c.name.trim(), contact:c.contact||null, email:c.email||null, booking_date:c.bookingDate||null, agreement_value:Number(c.agreementValue), note:c.note||null }]; const rows=await sb("/rest/v1/customers",{method:"POST",token:state.session.access_token,body}); state.customers.unshift(mapCustomer(rows[0])); if(c.unitId){ await setUnitStatus(c.unitId,"booked"); } showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteCustomer(id){ try { await sb("/rest/v1/customers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.customers=state.customers.filter(c=>c.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteCustomer(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/customers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.customers=state.customers.filter(c=>c.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addReceipt(r){ try { const body=[{ customer_id:r.customerId, amount:Number(r.amount), receipt_date:r.date, mode:r.mode, note:r.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/receipts",{method:"POST",token:state.session.access_token,body}); state.receipts.unshift(mapReceipt(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteReceipt(id){ try { await sb("/rest/v1/receipts?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.receipts=state.receipts.filter(r=>r.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteReceipt(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/receipts?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.receipts=state.receipts.filter(r=>r.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addWorkItem(w){ try { const body=[{ site_id:w.siteId, work_name:w.workName.trim(), contractor_id:w.contractorId||null, total_qty:w.totalQty?Number(w.totalQty):null, unit:w.unit||null, rate:w.rate?Number(w.rate):null, retention_pct:w.retentionPct?Number(w.retentionPct):0 }]; const rows=await sb("/rest/v1/work_items",{method:"POST",token:state.session.access_token,body}); state.workItems.push(mapWorkItem(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteWorkItem(id){ try { await sb("/rest/v1/work_items?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.workItems=state.workItems.filter(w=>w.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteWorkItem(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/work_items?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.workItems=state.workItems.filter(w=>w.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addRaBill(r){ try { const body=[{ work_item_id:r.workItemId, bill_no:r.billNo, bill_date:r.date, cumulative_qty:Number(r.cumulativeQty), cumulative_value:Number(r.cumulativeValue), retention_amount:Number(r.retentionAmount), previous_paid:Number(r.previousPaid), net_payable:Number(r.netPayable), status:r.status||"pending", note:r.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/ra_bills",{method:"POST",token:state.session.access_token,body}); state.raBills.push(mapRaBill(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function markRaPaid(id){ if(!confirm("RA बिल PAID करायचं का?")) return; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const b=state.raBills.find(x=>x.id===id); if(b) b.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteRaBill(id){ try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.raBills=state.raBills.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function markRaPaid(id){ if(!ownerGuard()) return; if(!confirm("RA बिल PAID करायचं का?")) return; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const b=state.raBills.find(x=>x.id===id); if(b) b.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteRaBill(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.raBills=state.raBills.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addMachinery(m){ try { const body=[{ site_id:m.siteId, machine_name:m.machineName.trim(), rate:m.rate?Number(m.rate):null, rate_unit:m.rateUnit, qty:m.qty?Number(m.qty):null, fuel_cost:Number(m.fuelCost||0), total_cost:Number(m.totalCost), log_date:m.date, mode:m.mode, status:m.status, note:m.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/machinery_log",{method:"POST",token:state.session.access_token,body}); state.machinery.unshift(mapMachinery(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteMachinery(id){ try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.machinery=state.machinery.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function markMachineryPaid(id){ try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const m=state.machinery.find(x=>x.id===id); if(m) m.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteMachinery(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.machinery=state.machinery.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function markMachineryPaid(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const m=state.machinery.find(x=>x.id===id); if(m) m.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addLabor(l){ try { const body=[{ site_id:l.siteId, worker_name:l.workerName.trim(), category:l.category||null, att_date:l.date, days:Number(l.days), wage_rate:l.wageRate?Number(l.wageRate):null, wage_amount:Number(l.wageAmount), status:l.status, note:l.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/labor_attendance",{method:"POST",token:state.session.access_token,body}); state.labor.unshift(mapLabor(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteLabor(id){ try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.labor=state.labor.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function markLaborPaid(id){ try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const l=state.labor.find(x=>x.id===id); if(l) l.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteLabor(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.labor=state.labor.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function markLaborPaid(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const l=state.labor.find(x=>x.id===id); if(l) l.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addDocument(d){ try { const body=[{ site_id:d.siteId||null, doc_name:d.docName.trim(), category:d.category||null, expiry_date:d.expiryDate||null, link:d.link||null, note:d.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/documents",{method:"POST",token:state.session.access_token,body}); state.documents.unshift(mapDocument(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteDocument(id){ try { await sb("/rest/v1/documents?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.documents=state.documents.filter(x=>x.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteDocument(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/documents?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.documents=state.documents.filter(x=>x.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 
 /* ================= Totals ================= */
 function computeTotals(){
@@ -554,7 +570,7 @@ function txnTableHtml(txns, showSite, opts){
   if (txns.length===0) return '<div style="color:var(--sub);font-size:13.5px;padding:12px;">'+(LANG==="en"?"No entries.":"नोंदी नाहीत.")+'</div>';
   let rows = '';
   txns.forEach(t=>{
-    const name = showSite ? ((state.sites.find(s=>s.id===t.siteId)||{}).name || "—") : (t.supplierId ? ((state.suppliers.find(s=>s.id===t.supplierId)||{}).name || "—") : (LANG==="en"?"Direct expense":"थेट खर्च (सप्लायर नाही)"));
+    const name = showSite ? ((state.sites.find(s=>s.id===t.siteId)||{}).name || "—") : (t.supplierId ? ((state.suppliers.find(s=>s.id===t.supplierId)||{}).name || "—") : t.contractorId ? "👷 "+((state.contractors.find(s=>s.id===t.contractorId)||{}).name || "—") : (LANG==="en"?"Direct expense":"थेट खर्च"));
     rows += '<div class="txn-row">'
       + '<div class="font-mono" style="color:var(--sub);font-size:11.5px;">'+esc(t.date)+'</div>'
       + '<div class="name">'+esc(name)+(t.billNo?'<div class="meta">'+t("billNo")+': '+esc(t.billNo)+'</div>':'')+(t.itemName?'<div class="meta">📦 '+esc(t.itemName)+(t.quantity?' · '+t.quantity+' '+esc(t.unit||""):'')+'</div>':'')+'<div class="meta">'+(LANG==="en"?"By":"टाकलं")+': '+esc(t.enteredBy)+'</div></div>'
@@ -634,9 +650,9 @@ function renderDashboard(){
 function openSupplierFromDash(id){ state.tab="reports"; state.reportTab="suppliers"; state.activeSupplierId=id; document.querySelectorAll(".tab-btn").forEach(b=>b.classList.toggle("active", b.dataset.tab==="reports")); renderReports(); }
 
 /* ================= ENTRY (unified) ================= */
-const addForm = { siteId:null, supplierId:"", category:CATS[0], taxableAmount:"", gstRate:0, billNo:"", date:new Date().toISOString().slice(0,10), status:"paid", mode:"cash", itemName:"", quantity:"", unit:"" };
+const addForm = { siteId:null, supplierId:"", contractorId:"", partyType:"none", category:CATS[0], taxableAmount:"", gstRate:0, billNo:"", date:new Date().toISOString().slice(0,10), status:"paid", mode:"cash", itemName:"", quantity:"", unit:"" };
 const usageForm = { siteId:null, itemName:"", quantity:"", unit:"", value:"", date:new Date().toISOString().slice(0,10), note:"" };
-const advanceForm = { supplierId:null, siteId:"", amount:"", date:new Date().toISOString().slice(0,10), mode:"cash", note:"" };
+const advanceForm = { supplierId:null, contractorId:null, partyType:"supplier", siteId:"", amount:"", date:new Date().toISOString().slice(0,10), mode:"cash", note:"" };
 const receiptForm = { customerId:null, amount:"", date:new Date().toISOString().slice(0,10), mode:"bank", note:"" };
 const raForm = { workItemId:null, date:new Date().toISOString().slice(0,10), cumulativeQty:"", note:"" };
 const machForm = { siteId:null, machineName:"", rate:"", rateUnit:"per_day", qty:"", fuelCost:"", date:new Date().toISOString().slice(0,10), mode:"cash", status:"pending", note:"" };
@@ -671,27 +687,40 @@ if (!state.entryType) state.entryType = "purchase";
 /* ---- Purchase / Expense ---- */
 function entryFormPurchase(){
   if (!addForm.siteId) addForm.siteId = state.sites[0].id;
+  if (!addForm.partyType) addForm.partyType = "none";
   const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
-  const supOpts = '<option value="" '+(!addForm.supplierId?"selected":"")+'>'+t("noSupplier")+'</option>' + state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===addForm.category?"selected":"")+'>'+esc(c)+'</option>').join("");
   const gstPills = GST_RATES.map(r=>'<button type="button" class="pill '+(addForm.gstRate===r?"active-amber":"")+'" onclick="setGstRate('+r+')">'+(r===0?(LANG==="en"?"None":"नाही"):r+"%")+'</button>').join("");
   const modeBtns = MODES.map(m=>'<button type="button" class="mode-btn '+(addForm.mode===m.id?"active":"")+'" onclick="setMode(\''+m.id+'\')">'+esc(m.label)+'</button>').join("");
   const gstAmount = addForm.taxableAmount ? Math.round(Number(addForm.taxableAmount)*addForm.gstRate/100) : 0;
   const totalAmount = (Number(addForm.taxableAmount)||0)+gstAmount;
   const gstPreview = addForm.taxableAmount>0 ? '<div style="margin-top:8px;font-size:12.5px;color:var(--sub);" class="font-mono">GST: '+inr(gstAmount)+' · <span style="color:var(--ink);font-weight:600;">'+(LANG==="en"?"Total":"एकूण")+': '+inr(totalAmount)+'</span></div>' : '';
+  const partyPills = ['none','supplier','contractor'].map(p=>{
+    const lbl = p==="none"?t("partyNone"):p==="supplier"?t("partySupplier"):t("partyContractor");
+    return '<button type="button" class="pill '+(addForm.partyType===p?"active-amber":"")+'" onclick="setPartyType(\''+p+'\')">'+esc(lbl)+'</button>';
+  }).join("");
+  let partySelectHtml = "";
+  if (addForm.partyType==="supplier") {
+    const opts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    partySelectHtml = '<div style="margin-bottom:14px;"><label class="form-label">'+t("partySupplier")+'</label><select class="field" onchange="addForm.supplierId=this.value">'+(opts||'<option value="">'+(LANG==="en"?"(add a supplier under Masters)":"(मास्टर्समध्ये सप्लायर जोडा)")+'</option>')+'</select></div>';
+  } else if (addForm.partyType==="contractor") {
+    const opts = state.contractors.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    partySelectHtml = '<div style="margin-bottom:14px;"><label class="form-label">'+t("partyContractor")+'</label><select class="field" onchange="addForm.contractorId=this.value">'+(opts||'<option value="">'+(LANG==="en"?"(add a contractor under Masters)":"(मास्टर्समध्ये कॉन्ट्रॅक्टर जोडा)")+'</option>')+'</select></div>';
+  }
   return '<div class="form-card">'
     + '<div class="form-grid2"><div><label class="form-label">'+t("site")+'</label><select class="field" id="f_site" onchange="addForm.siteId=this.value">'+siteOpts+'</select></div>'
-    + '<div><label class="form-label">'+t("supplier")+' '+t("optional")+'</label><select class="field" id="f_sup" onchange="addForm.supplierId=this.value">'+supOpts+'</select></div></div>'
-    + '<div style="font-size:11.5px;color:var(--sub);margin:-8px 0 14px 0;">'+(LANG==="en"?'Labor, fuel or any direct expense — leave supplier as "No supplier".':'मजुरी, पेट्रोल-डिझेल किंवा थेट खर्च — सप्लायर "नाही" तसंच ठेवा.')+'</div>'
-    + '<div class="form-grid2"><div><label class="form-label">'+t("category")+'</label><select class="field" onchange="addForm.category=this.value">'+catOpts+'</select></div>'
     + '<div><label class="form-label">'+t("date")+'</label><input class="field" type="date" value="'+addForm.date+'" onchange="addForm.date=this.value"></div></div>'
+    + '<div style="margin-bottom:6px;"><label class="form-label">'+(LANG==="en"?"Who did you pay?":"कोणाला दिलं?")+'</label><div class="pill-row">'+partyPills+'</div></div>'
+    + partySelectHtml
+    + '<div class="form-grid2"><div><label class="form-label">'+t("category")+'</label><select class="field" onchange="addForm.category=this.value">'+catOpts+'</select></div>'
+    + '<div><label class="form-label">'+t("billNo")+'</label><input class="field" value="'+esc(addForm.billNo)+'" oninput="addForm.billNo=this.value;"></div></div>'
     + '<div class="form-grid2" style="grid-template-columns:1.4fr 1fr .8fr;">'
     + '<div><label class="form-label">'+t("itemName")+'</label><input class="field" list="commonItemList" id="f_itemname" value="'+esc(addForm.itemName)+'" placeholder="e.g. सिमेंट OPC 53 / cement" oninput="addForm.itemName=this.value; handleItemInput(addForm,\'f_itemname\',\'f_unit\');"></div>'
     + '<div><label class="form-label">'+t("qty")+'</label><input class="field" type="number" value="'+addForm.quantity+'" oninput="addForm.quantity=this.value;"></div>'
     + '<div><label class="form-label">'+t("unit")+'</label><input class="field" list="unitList" id="f_unit" value="'+esc(addForm.unit)+'" oninput="addForm.unit=this.value;"></div>'
     + '</div>' + buildItemDatalist("commonItemList") + '<datalist id="unitList">'+UNITS.map(u=>'<option value="'+u+'">').join("")+'</datalist>'
     + '<div class="form-grid2"><div><label class="form-label">'+(LANG==="en"?"Taxable Amount ₹":"टॅक्सेबल रक्कम ₹")+'</label><input class="field" type="number" id="f_amount" value="'+addForm.taxableAmount+'" oninput="addForm.taxableAmount=this.value; updateGstPreview();"></div>'
-    + '<div><label class="form-label">'+t("billNo")+'</label><input class="field" value="'+esc(addForm.billNo)+'" oninput="addForm.billNo=this.value;"></div></div>'
+    + '<div></div></div>'
     + '<div style="margin-bottom:14px;"><label class="form-label">'+t("gstRate")+'</label><div class="pill-row">'+gstPills+'</div><div id="gstPreviewBox">'+gstPreview+'</div></div>'
     + '<div style="margin-bottom:14px;"><label class="form-label">'+t("mode")+'</label><div class="mode-grid">'+modeBtns+'</div></div>'
     + '<div style="margin-bottom:18px;"><label class="form-label">'+t("status")+'</label><div class="status-row">'
@@ -709,13 +738,14 @@ function updateGstPreview(){
 function setGstRate(r){ addForm.gstRate=r; renderEntry(); const el=document.getElementById("f_amount"); if(el) el.focus(); }
 function setMode(m){ addForm.mode=m; renderEntry(); }
 function setStatus(s){ addForm.status=s; renderEntry(); }
+function setPartyType(p){ addForm.partyType=p; renderEntry(); }
 async function submitTxn(){
   const errEl=document.getElementById("addErr");
   if (!addForm.siteId || !addForm.taxableAmount || Number(addForm.taxableAmount)<=0){ errEl.textContent=LANG==="en"?"Enter site and a valid amount.":"साईट व योग्य रक्कम भरा."; errEl.classList.remove("hidden"); return; }
   const gstAmount=Math.round(Number(addForm.taxableAmount)*addForm.gstRate/100);
   const totalAmount=Number(addForm.taxableAmount)+gstAmount;
   try {
-    await addTxn({ siteId:addForm.siteId, supplierId:addForm.supplierId||null, category:addForm.category, taxableAmount:Number(addForm.taxableAmount), gstRate:addForm.gstRate, gstAmount, totalAmount, billNo:addForm.billNo, date:addForm.date, status:addForm.status, mode:addForm.mode, itemName:addForm.itemName, quantity:addForm.quantity, unit:addForm.unit });
+    await addTxn({ siteId:addForm.siteId, supplierId:addForm.supplierId||null, contractorId:addForm.contractorId||null, partyType:addForm.partyType, category:addForm.category, taxableAmount:Number(addForm.taxableAmount), gstRate:addForm.gstRate, gstAmount, totalAmount, billNo:addForm.billNo, date:addForm.date, status:addForm.status, mode:addForm.mode, itemName:addForm.itemName, quantity:addForm.quantity, unit:addForm.unit });
     addForm.taxableAmount=""; addForm.billNo=""; addForm.itemName=""; addForm.quantity=""; errEl.classList.add("hidden");
     renderEntry();
   } catch(e) {}
@@ -748,12 +778,22 @@ async function submitUsageEntry(){
 
 /* ---- Advance ---- */
 function entryFormAdvance(){
-  if (state.suppliers.length===0) return '<div class="empty-note">'+(LANG==="en"?"Add a Supplier under Masters first.":'आधी "मास्टर्स" मध्ये सप्लायर जोडा.')+'</div>';
-  if (!advanceForm.supplierId) advanceForm.supplierId = state.suppliers[0].id;
-  const supOpts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  if (state.suppliers.length===0 && state.contractors.length===0) return '<div class="empty-note">'+(LANG==="en"?"Add a Supplier or Contractor under Masters first.":'आधी "मास्टर्स" मध्ये सप्लायर किंवा कॉन्ट्रॅक्टर जोडा.')+'</div>';
+  const partyPills = ['supplier','contractor'].map(p=>'<button type="button" class="pill '+(advanceForm.partyType===p?"active-amber":"")+'" onclick="advanceForm.partyType=\''+p+'\'; renderEntry();">'+(p==="supplier"?t("partySupplier"):t("partyContractor"))+'</button>').join("");
+  let partySelect = "";
+  if (advanceForm.partyType==="supplier") {
+    if (!advanceForm.supplierId && state.suppliers[0]) advanceForm.supplierId = state.suppliers[0].id;
+    const opts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    partySelect = '<select class="field" onchange="advanceForm.supplierId=this.value">'+(opts||'<option value="">—</option>')+'</select>';
+  } else {
+    if (!advanceForm.contractorId && state.contractors[0]) advanceForm.contractorId = state.contractors[0].id;
+    const opts = state.contractors.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    partySelect = '<select class="field" onchange="advanceForm.contractorId=this.value">'+(opts||'<option value="">—</option>')+'</select>';
+  }
   const siteOptsAdv = '<option value="">'+(LANG==="en"?"(no site)":"(कोणतीही साईट नाही)")+'</option>' + state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   return '<div class="form-card">'
-    + '<div class="form-grid2"><div><label class="form-label">'+t("supplier")+'</label><select class="field" onchange="advanceForm.supplierId=this.value">'+supOpts+'</select></div>'
+    + '<div style="margin-bottom:10px;"><label class="form-label">'+(LANG==="en"?"To whom?":"कोणाला?")+'</label><div class="pill-row">'+partyPills+'</div></div>'
+    + '<div class="form-grid2"><div><label class="form-label">'+(advanceForm.partyType==="supplier"?t("partySupplier"):t("partyContractor"))+'</label>'+partySelect+'</div>'
     + '<div><label class="form-label">'+t("amount")+'</label><input class="field" type="number" value="'+advanceForm.amount+'" oninput="advanceForm.amount=this.value;"></div></div>'
     + '<div class="form-grid2"><div><label class="form-label">'+t("site")+' '+t("optional")+'</label><select class="field" onchange="advanceForm.siteId=this.value">'+siteOptsAdv+'</select></div>'
     + '<div><label class="form-label">'+t("date")+'</label><input class="field" type="date" value="'+advanceForm.date+'" onchange="advanceForm.date=this.value;"></div></div>'
@@ -900,10 +940,11 @@ const docForm = { siteId:"", docName:"", category:"", expiryDate:"", link:"", no
 
 function setMasterTab(k){ state.masterTab=k; renderMasters(); }
 function renderMasters(){
-  const tabs = [["sites",t("mastersSites")],["suppliers",t("mastersSuppliers")],["units",t("mastersUnits")],["customers",t("mastersCustomers")],["work",t("mastersWork")],["docs",t("mastersDocs")]];
+  const tabs = [["sites",t("mastersSites")],["suppliers",t("mastersSuppliers")],["contractors",t("mastersContractors")],["units",t("mastersUnits")],["customers",t("mastersCustomers")],["work",t("mastersWork")],["docs",t("mastersDocs")]];
   let inner = "";
   if (state.masterTab==="sites") inner = mastersSites();
   else if (state.masterTab==="suppliers") inner = mastersSuppliers();
+  else if (state.masterTab==="contractors") inner = mastersContractors();
   else if (state.masterTab==="units") inner = mastersUnits();
   else if (state.masterTab==="customers") inner = mastersCustomers();
   else if (state.masterTab==="work") inner = mastersWork();
@@ -933,6 +974,20 @@ function mastersSuppliers(){
 }
 function submitSupplier(){ addSupplier(setupForm.supName, setupForm.supCat, setupForm.supContact, setupForm.supGstin); setupForm.supName=""; setupForm.supContact=""; setupForm.supGstin=""; }
 
+const contractorForm = { name:"", workType:"", contact:"", gstin:"" };
+function mastersContractors(){
+  const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===contractorForm.workType?"selected":"")+'>'+esc(c)+'</option>').join("");
+  let rows=''; state.contractors.forEach(c=>{ rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(c.name)+'</span> <span style="font-size:12px;color:var(--sub);">'+(c.workType?'· '+esc(c.workType):'')+(c.gstin?' · '+esc(c.gstin):'')+'</span></div><button class="icon-btn" onclick="deleteContractor(\''+c.id+'\')">🗑</button></div>'; });
+  const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + '<input class="field" placeholder="'+(LANG==="en"?"Name":"नाव")+'" value="'+esc(contractorForm.name)+'" oninput="contractorForm.name=this.value;">'
+    + '<select class="field" onchange="contractorForm.workType=this.value">'+catOpts+'</select>'
+    + '<input class="field" placeholder="'+(LANG==="en"?"Contact (optional)":"कॉन्टॅक्ट नंबर (ऐच्छिक)")+'" value="'+esc(contractorForm.contact)+'" oninput="contractorForm.contact=this.value;">'
+    + '<input class="field" placeholder="GSTIN '+(LANG==="en"?"(optional)":"(ऐच्छिक)")+'" value="'+esc(contractorForm.gstin)+'" oninput="contractorForm.gstin=this.value;">'
+    + '<button class="small-btn" style="background:var(--green);" onclick="submitContractor()">＋ '+t("add")+'</button></div>';
+  return sectionHtml(t("mastersContractors"), LANG==="en"?"People/firms doing actual work on site (supervisors, RCC, plaster, tile contractors)":"साईटवर प्रत्यक्ष काम करणारे (सुपरवायझर, RCC, प्लास्टर, टाईल कॉन्ट्रॅक्टर)", formHtml + (rows?'<div class="list-panel">'+rows+'</div>':''));
+}
+function submitContractor(){ addContractor(contractorForm.name, contractorForm.workType, contractorForm.contact, contractorForm.gstin); contractorForm.name=""; contractorForm.contact=""; contractorForm.gstin=""; }
+
 function mastersUnits(){
   if (state.sites.length===0) return '<div class="empty-note">'+(LANG==="en"?"Add a Site first.":"आधी साईट जोडा.")+'</div>';
   if (!unitForm.siteId) unitForm.siteId = state.sites[0].id;
@@ -949,7 +1004,7 @@ function mastersUnits(){
     const su = state.units.filter(u=>u.siteId===site.id); if (!su.length) return;
     rows += '<div style="font-weight:600;font-size:13.5px;margin:10px 0 6px 0;">'+esc(site.name)+'</div><div class="list-panel" style="margin-bottom:10px;">';
     su.forEach(u=>{ rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(u.unitNo)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+esc(u.unitType||"")+(u.area?' · '+u.area+' sqft':'')+(u.price?' · '+inr(u.price):'')+'</span></div>'
-      + '<div style="display:flex;align-items:center;gap:8px;"><select class="field" style="margin:0;padding:4px 8px;font-size:11.5px;width:auto;" onchange="setUnitStatus(\''+u.id+'\',this.value)">'+Object.keys(STATUS_LABEL).map(s=>'<option value="'+s+'" '+(s===u.status?"selected":"")+'>'+STATUS_LABEL[s]+'</option>').join("")+'</select><button class="icon-btn" onclick="deleteUnit(\''+u.id+'\')">🗑</button></div></div>'; });
+      + '<div style="display:flex;align-items:center;gap:8px;"><select class="field owner-select" '+(isOwner()?"":"disabled")+' style="margin:0;padding:4px 8px;font-size:11.5px;width:auto;" onchange="setUnitStatus(\''+u.id+'\',this.value)">'+Object.keys(STATUS_LABEL).map(s=>'<option value="'+s+'" '+(s===u.status?"selected":"")+'>'+STATUS_LABEL[s]+'</option>').join("")+'</select><button class="icon-btn" onclick="deleteUnit(\''+u.id+'\')">🗑</button></div></div>'; });
     rows += '</div>';
   });
   return sectionHtml(t("mastersUnits"),"", formHtml + rows);
@@ -986,7 +1041,7 @@ function mastersWork(){
   if (state.sites.length===0) return '<div class="empty-note">'+(LANG==="en"?"Add a Site first.":"आधी साईट जोडा.")+'</div>';
   if (!workForm.siteId) workForm.siteId = state.sites[0].id;
   const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
-  const contractorOpts = '<option value="">'+(LANG==="en"?"(add contractor later)":"(कॉन्ट्रॅक्टर नंतर जोडा)")+'</option>' + state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const contractorOpts = '<option value="">'+(LANG==="en"?"(add contractor later)":"(कॉन्ट्रॅक्टर नंतर जोडा)")+'</option>' + state.contractors.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const formHtml = '<div class="form-card" style="margin-bottom:14px;">'
     + '<div class="form-grid2"><div><label class="form-label">'+t("site")+'</label><select class="field" onchange="workForm.siteId=this.value">'+siteOpts+'</select></div>'
     + '<div><label class="form-label">'+(LANG==="en"?"Work name":"कामाचं नाव")+'</label><input class="field" value="'+esc(workForm.workName)+'" placeholder="RCC - Slab" oninput="workForm.workName=this.value;"></div></div>'
@@ -1001,7 +1056,7 @@ function mastersWork(){
   state.sites.forEach(site=>{
     const items=state.workItems.filter(w=>w.siteId===site.id); if(!items.length) return;
     rows += '<div style="font-weight:600;font-size:13.5px;margin:10px 0 6px 0;">'+esc(site.name)+'</div><div class="list-panel" style="margin-bottom:10px;">';
-    items.forEach(w=>{ const c=state.suppliers.find(s=>s.id===w.contractorId); rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(w.workName)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(c?esc(c.name):'')+(w.rate?' · ₹'+w.rate+'/'+esc(w.unit||""):'')+'</span></div><button class="icon-btn" onclick="deleteWorkItem(\''+w.id+'\')">🗑</button></div>'; });
+    items.forEach(w=>{ const c=state.contractors.find(s=>s.id===w.contractorId); rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(w.workName)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(c?esc(c.name):'')+(w.rate?' · ₹'+w.rate+'/'+esc(w.unit||""):'')+'</span></div><button class="icon-btn" onclick="deleteWorkItem(\''+w.id+'\')">🗑</button></div>'; });
     rows += '</div>';
   });
   return sectionHtml(t("mastersWork"),"", formHtml + rows);
@@ -1033,13 +1088,14 @@ function mastersDocs(){
 async function submitDocumentEntry(){ const errEl=document.getElementById("docErr"); if(!docForm.docName.trim()){ errEl.textContent=LANG==="en"?"Enter document name.":"डॉक्युमेंटचं नाव भरा."; errEl.classList.remove("hidden"); return; } try { await addDocument(docForm); docForm.docName=""; docForm.expiryDate=""; docForm.link=""; docForm.note=""; } catch(e){} }
 
 /* ================= REPORTS ================= */
-function setReportTab(k){ state.reportTab=k; state.activeSiteId=null; state.activeSupplierId=null; state.activeCustomerId=null; state.activeWorkId=null; renderReports(); }
+function setReportTab(k){ state.reportTab=k; state.activeSiteId=null; state.activeSupplierId=null; state.activeContractorId=null; state.activeCustomerId=null; state.activeWorkId=null; renderReports(); }
 function renderReports(){
-  const tabs = [["sites",t("reportSites")],["suppliers",t("reportSuppliers")],["stock",t("reportStock")],["sales",t("reportSales")],["progress",t("reportProgress")],["finance",t("reportFinance")],["mach",t("reportMach")],["labor",t("reportLabor")]];
+  const tabs = [["sites",t("reportSites")],["suppliers",t("reportSuppliers")],["contractors",t("reportContractors")],["stock",t("reportStock")],["sales",t("reportSales")],["progress",t("reportProgress")],["finance",t("reportFinance")],["mach",t("reportMach")],["labor",t("reportLabor")]];
   const sub = subtabsHtml(tabs, state.reportTab, "setReportTab");
   let inner = "";
   if (state.reportTab==="sites") inner = state.activeSiteId ? reportSiteDetail(state.activeSiteId) : reportSitesList();
   else if (state.reportTab==="suppliers") inner = state.activeSupplierId ? reportSupplierDetail(state.activeSupplierId) : reportSuppliersList();
+  else if (state.reportTab==="contractors") inner = state.activeContractorId ? reportContractorDetail(state.activeContractorId) : reportContractorsList();
   else if (state.reportTab==="stock") inner = reportStock();
   else if (state.reportTab==="sales") inner = state.activeCustomerId ? reportCustomerDetail(state.activeCustomerId) : reportSales();
   else if (state.reportTab==="progress") inner = state.activeWorkId ? reportWorkDetail(state.activeWorkId) : reportProgress();
@@ -1047,6 +1103,52 @@ function renderReports(){
   else if (state.reportTab==="mach") inner = reportMachinery();
   else if (state.reportTab==="labor") inner = reportLabor();
   document.getElementById("bodyInner").innerHTML = sub + inner;
+}
+
+/* ---- Contractors report ---- */
+function contractorTotals(){
+  return state.contractors.map(c=>{
+    const directTxns = state.txns.filter(x=>x.contractorId===c.id);
+    const directAmt = directTxns.reduce((a,x)=>a+x.totalAmount,0);
+    const workIds = state.workItems.filter(w=>w.contractorId===c.id).map(w=>w.id);
+    const raAmt = state.raBills.filter(b=>workIds.includes(b.workItemId)).reduce((a,b)=>a+b.netPayable,0);
+    const advAmt = state.advances.filter(a=>a.contractorId===c.id).reduce((a,x)=>a+x.amount,0);
+    return { contractor:c, amount: directAmt+raAmt, advance:advAmt, count: directTxns.length + state.raBills.filter(b=>workIds.includes(b.workItemId)).length };
+  }).sort((a,b)=>b.amount-a.amount);
+}
+function reportContractorsList(){
+  if (state.contractors.length===0) return '<div class="empty-note">'+(LANG==="en"?"No contractors yet — add under Masters.":'अजून कॉन्ट्रॅक्टर नाही — "मास्टर्स" मध्ये जोडा.')+'</div>';
+  const totals = contractorTotals();
+  let inner='<div class="grid-cards">';
+  totals.forEach(tt=>{ inner += '<div class="card" onclick="openReportContractor(\''+tt.contractor.id+'\')"><div class="card-title">'+esc(tt.contractor.name)+'</div><div class="card-sub">'+esc(tt.contractor.workType||"")+'</div><div class="card-amount" style="color:var(--orange);">'+inr(tt.amount)+'</div><div class="card-count">'+tt.count+' '+(LANG==="en"?"entries (all sites)":"नोंदी (सर्व साईट)")+(tt.advance>0?' · '+(LANG==="en"?"advance":"ॲडव्हान्स")+' '+inr(tt.advance):'')+'</div></div>'; });
+  inner+='</div>';
+  return sectionHtml(t("reportContractors"),"", inner);
+}
+function openReportContractor(id){ state.activeContractorId=id; renderReports(); }
+function reportContractorDetail(contractorId){
+  const c = state.contractors.find(x=>x.id===contractorId); if(!c) return reportContractorsList();
+  const directTxns = applyFilter(state.txns.filter(x=>x.contractorId===c.id)).sort((a,b)=>a.date<b.date?1:-1);
+  const workIds = state.workItems.filter(w=>w.contractorId===c.id).map(w=>w.id);
+  const raBills = state.raBills.filter(b=>workIds.includes(b.workItemId));
+  const advances = state.advances.filter(a=>a.contractorId===c.id);
+  const directTotal = directTxns.reduce((a,x)=>a+x.totalAmount,0);
+  const raTotal = raBills.reduce((a,b)=>a+b.netPayable,0);
+  const advTotal = advances.reduce((a,x)=>a+x.amount,0);
+  const total = directTotal + raTotal;
+  const pending = state.txns.filter(x=>x.contractorId===c.id && x.status==="pending").reduce((a,x)=>a+x.totalAmount,0) + raBills.filter(b=>b.status==="pending").reduce((a,b)=>a+b.netPayable,0);
+  let flags = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:13px;">';
+  if (pending>0) flags += '<div style="color:var(--red);font-weight:600;">⚠ '+(LANG==="en"?"Pending":"पेंडिंग")+': '+inr(pending)+'</div>';
+  if (advTotal>0) flags += '<div style="color:var(--steel);font-weight:600;">💰 '+(LANG==="en"?"Advance given":"दिलेला ॲडव्हान्स")+': '+inr(advTotal)+'</div>';
+  if (raTotal>0) flags += '<div style="color:var(--amber);font-weight:600;">📐 RA: '+inr(raTotal)+'</div>';
+  flags += '</div>';
+  let advList=''; advances.forEach(a=>{ const site=state.sites.find(s=>s.id===a.siteId); advList+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+inr(a.amount)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(a.date)+(site?' · '+esc(site.name):'')+' · '+esc(modeLabel(a.mode))+'</span></div><button class="icon-btn" onclick="deleteAdvance(\''+a.id+'\')">🗑</button></div>'; });
+  let raList=''; raBills.sort((a,b)=>a.date<b.date?1:-1).forEach(b=>{ const w=state.workItems.find(x=>x.id===b.workItemId); const site=w?state.sites.find(s=>s.id===w.siteId):null; raList+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;">RA-'+b.billNo+' '+(w?esc(w.workName):"")+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+(site?esc(site.name)+' · ':'')+esc(b.date)+' · '+inr(b.netPayable)+'</span></div>'+stampHtml(b.status)+'</div>'; });
+  return '<button class="back-btn no-print" onclick="openReportContractor(null)">‹ '+t("reportContractors")+'</button>'
+    + printHeaderHtml(c.name, t("reportContractors"))
+    + sectionHtml(c.name, c.workType||"", flags+filterBarHtml()+txnTableHtml(directTxns,true),
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+printBtnHtml()+'<div style="text-align:right;"><div style="font-size:10.5px;color:var(--sub);text-transform:uppercase;">'+(LANG==="en"?"Total":"एकूण")+'</div><div class="font-display" style="font-size:22px;font-weight:600;color:var(--orange);">'+inr(total)+'</div></div></div>')
+    + (raList?sectionHtml(t("reportProgress"),"", '<div class="list-panel">'+raList+'</div>'):'')
+    + (advList?'<div class="no-print">'+sectionHtml(t("typeAdvance"),"", '<div class="list-panel">'+advList+'</div>')+'</div>':'');
 }
 
 /* ---- Sites report ---- */
@@ -1194,7 +1296,7 @@ function reportProgress(){
     const items=state.workItems.filter(w=>w.siteId===site.id); if(!items.length) return;
     rows += '<div style="font-weight:600;font-size:13.5px;margin:10px 0 6px 0;">'+esc(site.name)+'</div><div class="grid-cards" style="margin-bottom:10px;">';
     items.forEach(w=>{
-      const contractor=state.suppliers.find(s=>s.id===w.contractorId);
+      const contractor=state.contractors.find(s=>s.id===w.contractorId);
       const bills=state.raBills.filter(b=>b.workItemId===w.id).sort((a,b)=>b.billNo-a.billNo); const latest=bills[0];
       const pct=(w.totalQty&&latest)?Math.round(latest.cumulativeQty/w.totalQty*100):null;
       rows += '<div class="card" onclick="openReportWork(\''+w.id+'\')"><div class="card-title">'+esc(w.workName)+'</div><div class="card-sub">'+(contractor?esc(contractor.name):(LANG==="en"?"No contractor":"कॉन्ट्रॅक्टर नाही"))+(w.rate?' · ₹'+w.rate+'/'+esc(w.unit||""):'')+'</div>'
@@ -1209,7 +1311,7 @@ function reportProgress(){
 function openReportWork(id){ state.activeWorkId=id; renderReports(); }
 function reportWorkDetail(workId){
   const w=state.workItems.find(x=>x.id===workId); if(!w) return reportProgress();
-  const site=state.sites.find(s=>s.id===w.siteId); const contractor=state.suppliers.find(s=>s.id===w.contractorId);
+  const site=state.sites.find(s=>s.id===w.siteId); const contractor=state.contractors.find(s=>s.id===w.contractorId);
   const bills=state.raBills.filter(b=>b.workItemId===w.id).sort((a,b)=>a.billNo-b.billNo);
   const lastBill=bills[bills.length-1]; const pct=(w.totalQty&&lastBill)?Math.round(lastBill.cumulativeQty/w.totalQty*100):null;
   let progressHtml=''; if(pct!=null){ progressHtml='<div style="margin-bottom:14px;"><div style="background:var(--line);border-radius:4px;height:10px;overflow:hidden;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(pct>=100?"var(--green)":"var(--orange)")+';"></div></div><div style="font-size:12.5px;color:var(--sub);margin-top:4px;">'+pct+'% ('+lastBill.cumulativeQty+' / '+w.totalQty+' '+esc(w.unit||"")+')</div></div>'; }
