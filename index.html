@@ -225,7 +225,7 @@ const STR = {
   typeRa:{mr:"RA बिल (कॉन्ट्रॅक्टर)",en:"RA Bill (Contractor)"}, typeMach:{mr:"मशिनरी/व्हेईकल भाडं",en:"Machinery/Vehicle Rent"},
   typeLabor:{mr:"मजूर हजेरी",en:"Labor Attendance"},
   mastersSites:{mr:"साईट्स",en:"Sites"}, mastersSuppliers:{mr:"सप्लायर्स (मटेरियल)",en:"Suppliers (Material)"}, mastersContractors:{mr:"कॉन्ट्रॅक्टर्स (काम)",en:"Contractors (Work)"},
-  reportContractors:{mr:"कॉन्ट्रॅक्टर रिपोर्ट",en:"Contractor Report"}, partyNone:{mr:"थेट खर्च (कोणीही नाही)",en:"Direct expense (none)"}, partySupplier:{mr:"सप्लायर (मटेरियल)",en:"Supplier (Material)"}, partyContractor:{mr:"कॉन्ट्रॅक्टर (काम)",en:"Contractor (Work)"},
+  reportContractors:{mr:"कॉन्ट्रॅक्टर रिपोर्ट",en:"Contractor Report"}, reportAdvances:{mr:"ॲडव्हान्सेस",en:"Advances"}, partyNone:{mr:"थेट खर्च (कोणीही नाही)",en:"Direct expense (none)"}, partySupplier:{mr:"सप्लायर (मटेरियल)",en:"Supplier (Material)"}, partyContractor:{mr:"कॉन्ट्रॅक्टर (काम)",en:"Contractor (Work)"},
   mastersUnits:{mr:"युनिट्स (फ्लॅट्स)",en:"Units (Flats)"}, mastersCustomers:{mr:"कस्टमर्स/बुकिंग",en:"Customers/Bookings"},
   mastersWork:{mr:"कामाचे प्रकार",en:"Work Items"}, mastersDocs:{mr:"डॉक्युमेंट्स",en:"Documents"},
   reportDashboard:{mr:"ओव्हरव्ह्यू",en:"Overview"}, reportSites:{mr:"साईट रिपोर्ट",en:"Site Report"}, reportSuppliers:{mr:"सप्लायर रिपोर्ट",en:"Supplier Report"},
@@ -1260,12 +1260,13 @@ async function submitDocumentEntry(){ const errEl=document.getElementById("docEr
 /* ================= REPORTS ================= */
 function setReportTab(k){ state.reportTab=k; state.activeSiteId=null; state.activeSupplierId=null; state.activeContractorId=null; state.activeCustomerId=null; state.activeWorkId=null; renderReports(); }
 function renderReports(){
-  const tabs = [["sites",t("reportSites")],["suppliers",t("reportSuppliers")],["contractors",t("reportContractors")],["stock",t("reportStock")],["sales",t("reportSales")],["progress",t("reportProgress")],["finance",t("reportFinance")],["mach",t("reportMach")],["labor",t("reportLabor")]];
+  const tabs = [["sites",t("reportSites")],["suppliers",t("reportSuppliers")],["contractors",t("reportContractors")],["advances",t("reportAdvances")],["stock",t("reportStock")],["sales",t("reportSales")],["progress",t("reportProgress")],["finance",t("reportFinance")],["mach",t("reportMach")],["labor",t("reportLabor")]];
   const sub = subtabsHtml(tabs, state.reportTab, "setReportTab");
   let inner = "";
   if (state.reportTab==="sites") inner = state.activeSiteId ? reportSiteDetail(state.activeSiteId) : reportSitesList();
   else if (state.reportTab==="suppliers") inner = state.activeSupplierId ? reportSupplierDetail(state.activeSupplierId) : reportSuppliersList();
   else if (state.reportTab==="contractors") inner = state.activeContractorId ? reportContractorDetail(state.activeContractorId) : reportContractorsList();
+  else if (state.reportTab==="advances") inner = reportAdvances();
   else if (state.reportTab==="stock") inner = reportStock();
   else if (state.reportTab==="sales") inner = state.activeCustomerId ? reportCustomerDetail(state.activeCustomerId) : reportSales();
   else if (state.reportTab==="progress") inner = state.activeWorkId ? reportWorkDetail(state.activeWorkId) : reportProgress();
@@ -1275,7 +1276,63 @@ function renderReports(){
   document.getElementById("bodyInner").innerHTML = sub + inner;
 }
 
-/* ---- Contractors report ---- */
+/* ---- Advances report (who, how much, balance) ---- */
+function reportAdvances(){
+  if (state.advances.length===0) return '<div class="empty-note">'+(LANG==="en"?'No advances given yet — add one from Entry → Advance to Supplier.':'अजून कोणताही ॲडव्हान्स दिलेला नाही — "नोंद करा" → "ॲडव्हान्स" मधून द्या.')+'</div>';
+
+  const totalAdvance = state.advances.reduce((a,x)=>a+x.amount,0);
+
+  // पार्टीनुसार (सप्लायर/कॉन्ट्रॅक्टर) एकत्र गोळाबेरीज: दिलेला ॲडव्हान्स vs त्यांची पेंडिंग बिलं
+  const partyMap = {}; // key: "supplier:id" or "contractor:id"
+  state.advances.forEach(a=>{
+    const key = a.partyType==="contractor" ? "contractor:"+a.contractorId : "supplier:"+a.supplierId;
+    partyMap[key] = partyMap[key] || { partyType:a.partyType, id: a.partyType==="contractor"?a.contractorId:a.supplierId, advance:0 };
+    partyMap[key].advance += a.amount;
+  });
+  Object.values(partyMap).forEach(p=>{
+    if (p.partyType==="contractor") {
+      const workIds = state.workItems.filter(w=>w.contractorId===p.id).map(w=>w.id);
+      p.pending = state.txns.filter(x=>x.contractorId===p.id && x.status==="pending").reduce((a,x)=>a+x.totalAmount,0)
+                + state.raBills.filter(b=>workIds.includes(b.workItemId) && b.status==="pending").reduce((a,b)=>a+b.netPayable,0);
+      const c = state.contractors.find(x=>x.id===p.id); p.name = c?c.name:"—";
+    } else {
+      p.pending = state.txns.filter(x=>x.supplierId===p.id && x.status==="pending").reduce((a,x)=>a+x.totalAmount,0);
+      const s = state.suppliers.find(x=>x.id===p.id); p.name = s?s.name:"—";
+    }
+    p.balance = p.advance - p.pending; // positive = still credit with them; negative = advance used up, more owed
+  });
+  const partyList = Object.values(partyMap).sort((a,b)=>b.advance-a.advance);
+  const totalCredit = partyList.reduce((a,p)=>a+Math.max(0,p.balance),0);
+
+  const summary = '<div class="stat-row" style="margin-bottom:20px;">'
+    + statCard(LANG==="en"?"Total Advances Given":"एकूण दिलेला ॲडव्हान्स", inr(totalAdvance), "--steel", "🤝")
+    + statCard(LANG==="en"?"Still in Credit (unused)":"अजून शिल्लक क्रेडिट", inr(totalCredit), "--green", "💳")
+    + '</div>';
+
+  let partyRows = '';
+  partyList.forEach(p=>{
+    const color = p.balance>0 ? "var(--green)" : (p.balance<0 ? "var(--red)" : "var(--sub)");
+    const label = p.balance>0 ? (LANG==="en"?"credit left: ":"शिल्लक क्रेडिट: ")+inr(p.balance) : p.balance<0 ? (LANG==="en"?"advance used, extra due: ":"ॲडव्हान्स संपला, आणखी देय: ")+inr(-p.balance) : (LANG==="en"?"fully settled":"पूर्ण जुळलं");
+    const openFn = p.partyType==="contractor" ? "openReportContractor" : "openReportSupplier";
+    partyRows += '<div class="list-row clickable" onclick="state.reportTab=\''+(p.partyType==="contractor"?"contractors":"suppliers")+'\'; '+openFn+'(\''+p.id+'\')"><div>'
+      + '<span style="font-weight:600;font-size:13.5px;">'+(p.partyType==="contractor"?"👷 ":"📦 ")+esc(p.name)+'</span> '
+      + '<span style="font-size:11.5px;color:var(--sub);">'+(p.partyType==="contractor"?t("partyContractor"):t("partySupplier"))+' · '+(LANG==="en"?"given":"दिलं")+': '+inr(p.advance)+'</span>'
+      + '</div><div class="font-mono" style="font-weight:700;color:'+color+';font-size:12.5px;">'+label+'</div></div>';
+  });
+
+  let logRows = '';
+  state.advances.slice().sort((a,b)=>a.date<b.date?1:-1).forEach(a=>{
+    const site = state.sites.find(s=>s.id===a.siteId);
+    const partyName = a.partyType==="contractor" ? ((state.contractors.find(c=>c.id===a.contractorId)||{}).name||"—") : ((state.suppliers.find(s=>s.id===a.supplierId)||{}).name||"—");
+    logRows += '<div class="list-row"><div>'
+      + '<span style="font-weight:600;font-size:13px;">'+inr(a.amount)+'</span> <span style="font-size:11.5px;color:var(--sub);">→ '+(a.partyType==="contractor"?"👷 ":"📦 ")+esc(partyName)+' · '+esc(a.date)+(site?' · '+esc(site.name):'')+' · '+esc(modeLabel(a.mode))+(a.note?' · '+esc(a.note):'')+'</span>'
+      + '</div><button class="icon-btn" onclick="deleteAdvance(\''+a.id+'\')">🗑</button></div>';
+  });
+
+  return summary
+    + sectionHtml(LANG==="en"?"By Party — Balance":"पार्टी-वाईज — शिल्लक", "", '<div class="list-panel">'+partyRows+'</div>')
+    + sectionHtml(LANG==="en"?"All Advances (chronological)":"सगळे ॲडव्हान्स (तारीखवार)", "", '<div class="list-panel">'+logRows+'</div>');
+}
 function contractorTotals(){
   return state.contractors.map(c=>{
     const directTxns = state.txns.filter(x=>x.contractorId===c.id);
