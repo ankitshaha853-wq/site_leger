@@ -6,6 +6,7 @@
 <title>साईट लेजर — Builder ERP</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
   --bg:#1E2320; --panel:#F2ECDF; --panelDark:#26302B; --ink:#221F19;
@@ -186,6 +187,7 @@ body.member-mode .role-badge.owner-only-badge{ display:none; }
     <div id="authErr" class="err-text hidden"></div>
     <button id="authSubmitBtn" class="btn-primary" style="margin-bottom:12px;">लॉगिन</button>
     <div style="text-align:center;font-size:12.5px;color:var(--sub);" id="authSwitchRow">अकाउंट नाही? <span class="switch-link" onclick="toggleAuthMode()">नवीन बनवा</span></div>
+    <div style="text-align:center;font-size:12px;color:var(--sub);margin-top:8px;" id="authForgotRow"><span class="switch-link" onclick="forgotPassword()">पासवर्ड विसरलात?</span></div>
   </div>
 </div>
 
@@ -282,9 +284,83 @@ async function sb(path, { method = "GET", body, token } = {}, _retried) {
 const apiSignUp = (email, password, full_name) => sb("/auth/v1/signup", { method: "POST", body: { email, password, data: { full_name } } });
 const apiSignIn = (email, password) => sb("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } });
 const apiRefresh = (refresh_token) => sb("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token } });
+const apiRecover = (email) => sb("/auth/v1/recover", { method: "POST", body: { email } });
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+
+/* ================= Google Drive Auto-Backup ================= */
+// खालचा GOOGLE_CLIENT_ID तुमचा स्वतःचा टाकावा लागेल (Google Cloud Console → OAuth Client ID → Web application).
+// जोपर्यंत हा भरला जात नाही, तोपर्यंत बॅकअप बटण "सेटअप बाकी आहे" असं दाखवेल — बाकी सगळं ॲप नेहमीसारखं चालेल.
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+let gTokenClient = null;
+let gAccessToken = null;
+function isGoogleConfigured(){ return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("YOUR_"); }
+function initGoogleAuth(){
+  if (!isGoogleConfigured() || !window.google || !google.accounts) return;
+  gTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: "https://www.googleapis.com/auth/drive.file",
+    callback: async (resp) => {
+      if (resp && resp.access_token) {
+        gAccessToken = resp.access_token; lsSet("g_connected","1");
+        showToast(LANG==="en"?"Connected to Google":"Google शी कनेक्ट झालं");
+        await backupToGoogleDrive();
+        if (state.tab==="dashboard") renderDashboard();
+      }
+    },
+  });
+}
+function connectGoogle(){
+  if (!isGoogleConfigured()) { showToast(LANG==="en"?"Google backup not set up yet (needs a Client ID in the code)":"Google बॅकअप अजून सेटअप झालेलं नाही (कोडमध्ये Client ID लागेल)"); return; }
+  if (!gTokenClient) { showToast(LANG==="en"?"Loading Google... try again in a moment":"Google लोड होतंय... थोड्या वेळाने परत प्रयत्न करा"); return; }
+  gTokenClient.requestAccessToken();
+}
+async function backupToGoogleDrive(){
+  if (!isGoogleConfigured()) return;
+  if (!gAccessToken) { connectGoogle(); return; }
+  const payload = {
+    sites:state.sites, suppliers:state.suppliers, contractors:state.contractors, transactions:state.txns,
+    materialUsage:state.usage, advances:state.advances, units:state.units, customers:state.customers,
+    receipts:state.receipts, workItems:state.workItems, raBills:state.raBills, machinery:state.machinery,
+    labor:state.labor, documents:state.documents, backedUpAt: new Date().toISOString(),
+  };
+  const fileName = "SiteLedger-Backup.json";
+  try {
+    let fileId = lsGet("g_backup_file_id");
+    if (!fileId) {
+      const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name%3D%27"+encodeURIComponent(fileName)+"%27%20and%20trashed%3Dfalse&spaces=drive", { headers:{ Authorization:"Bearer "+gAccessToken } });
+      const searchData = await searchRes.json();
+      if (searchData.files && searchData.files.length) fileId = searchData.files[0].id;
+    }
+    if (fileId) {
+      await fetch("https://www.googleapis.com/upload/drive/v3/files/"+fileId+"?uploadType=media", { method:"PATCH", headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type":"application/json" }, body: JSON.stringify(payload) });
+    } else {
+      const boundary = "sitelegerbackupboundary";
+      const metadata = { name: fileName, mimeType: "application/json" };
+      const body = "--"+boundary+"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"+JSON.stringify(metadata)+"\r\n--"+boundary+"\r\nContent-Type: application/json\r\n\r\n"+JSON.stringify(payload)+"\r\n--"+boundary+"--";
+      const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", { method:"POST", headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type":"multipart/related; boundary="+boundary }, body });
+      const data = await res.json(); fileId = data.id;
+    }
+    lsSet("g_backup_file_id", fileId); lsSet("g_backup_time", new Date().toISOString());
+    showToast(LANG==="en"?"Backed up to Google Drive":"Google Drive वर बॅकअप झालं");
+  } catch(e) { showToast((LANG==="en"?"Backup error: ":"बॅकअप त्रुटी: ")+e.message); }
+}
+function googleBackupWidget(){
+  const connected = !!gAccessToken || lsGet("g_connected")==="1";
+  const lastTime = lsGet("g_backup_time");
+  const lastStr = lastTime ? new Date(lastTime).toLocaleString(LANG==="en"?"en-IN":"en-IN") : (LANG==="en"?"never":"अजून नाही");
+  if (!isGoogleConfigured()) {
+    return '<div class="empty-note" style="text-align:left;">🔗 <b>'+(LANG==="en"?"Google Drive auto-backup":"Google Drive ऑटो-बॅकअप")+'</b><br><span style="font-size:12.5px;">'+(LANG==="en"?"Not set up yet — needs a Google OAuth Client ID added to the code once. Ask for setup help.":"अजून सेटअप व्हायचंय — कोडमध्ये एकदाच Google Client ID टाकावा लागेल.")+'</span></div>';
+  }
+  return '<div class="form-card" style="max-width:420px;">'
+    + '<div style="font-weight:600;font-size:14px;margin-bottom:6px;">🔗 '+(LANG==="en"?"Google Drive Backup":"Google Drive बॅकअप")+'</div>'
+    + '<div style="font-size:12px;color:var(--sub);margin-bottom:10px;">'+(LANG==="en"?"Last backup: ":"शेवटचा बॅकअप: ")+lastStr+'</div>'
+    + (connected
+        ? '<button class="small-btn" style="background:var(--green);" onclick="backupToGoogleDrive()">⬆ '+(LANG==="en"?"Backup Now":"आता बॅकअप घ्या")+'</button>'
+        : '<button class="small-btn" style="background:var(--steel);" onclick="connectGoogle()">'+(LANG==="en"?"Connect Google Drive":"Google Drive कनेक्ट करा")+'</button>')
+    + '</div>';
+}
 
 /* ================= Constants ================= */
 const CATS = ["टाईल वर्क","आरसीसी वर्क","प्लास्टर वर्क","ऍडमिश्चर","सिमेंट","केमिकल्स","पेट्रोल-डिझेल","किरकोळ मटेरियल","इतर लेबर"];
@@ -380,14 +456,43 @@ const state = {
 
 /* ================= Boot ================= */
 window.addEventListener("DOMContentLoaded", boot);
+window.addEventListener("DOMContentLoaded", ()=>{ setTimeout(initGoogleAuth, 400); });
 async function boot(){
   const savedLang = lsGet("ledger_lang"); if (savedLang) LANG = savedLang;
   renderLangToggles();
+  // पासवर्ड-रीसेट ईमेलच्या लिंकवरून परत आलो असू तर, ती आधी हाताळा
+  const hash = window.location.hash || "";
+  if (hash.includes("type=recovery") && hash.includes("access_token=")) {
+    const params = new URLSearchParams(hash.replace("#",""));
+    const recoveryToken = params.get("access_token");
+    document.getElementById("loader").classList.add("hidden");
+    showPasswordResetForm(recoveryToken);
+    return;
+  }
   const rt = lsGet("ledger_refresh_token");
   if (rt) { try { const data = await apiRefresh(rt); if (data && data.access_token) { state.session = data; lsSet("ledger_refresh_token", data.refresh_token); } } catch(e) {} }
   document.getElementById("loader").classList.add("hidden");
-  if (state.session) { document.getElementById("app").classList.remove("hidden"); applyStaticLabels(); await loadAll(); switchTab("dashboard"); }
+  if (state.session) { document.getElementById("app").classList.remove("hidden"); applyStaticLabels(); await loadAll(); switchTab("dashboard"); if (lsGet("g_connected")==="1") setTimeout(()=>{ if(gTokenClient) gTokenClient.requestAccessToken({prompt:""}); }, 800); }
   else { document.getElementById("authScreen").classList.remove("hidden"); }
+}
+function showPasswordResetForm(recoveryToken){
+  const card = document.querySelector("#authScreen .auth-card");
+  card.innerHTML = '<div class="brand" style="margin-bottom:10px;"><div class="brand-dot" style="width:9px;height:9px;"></div><span class="eyebrow">साईट लेजर</span></div>'
+    + '<h3 class="font-display" style="font-size:22px;margin:2px 0 18px 0;">नवीन पासवर्ड सेट करा</h3>'
+    + '<input id="newPassword" class="field" type="password" placeholder="नवीन पासवर्ड (किमान ६ अक्षरं)">'
+    + '<div id="resetErr" class="err-text hidden"></div>'
+    + '<button id="resetBtn" class="btn-primary">पासवर्ड सेव्ह करा</button>';
+  document.getElementById("authScreen").classList.remove("hidden");
+  document.getElementById("resetBtn").addEventListener("click", async ()=>{
+    const pw = document.getElementById("newPassword").value;
+    const errEl = document.getElementById("resetErr");
+    if (!pw || pw.length<6) { errEl.textContent="किमान ६ अक्षरांचा पासवर्ड टाका."; errEl.classList.remove("hidden"); return; }
+    try {
+      await sb("/auth/v1/user", { method:"PUT", token:recoveryToken, body:{ password: pw } });
+      showToast("पासवर्ड बदलला! आता लॉगिन करा.");
+      window.location.hash = ""; window.location.reload();
+    } catch(e) { errEl.textContent = e.message; errEl.classList.remove("hidden"); }
+  });
 }
 
 /* ================= Auth UI ================= */
@@ -397,6 +502,13 @@ function toggleAuthMode(){
   document.getElementById("authFullName").classList.toggle("hidden", state.authMode !== "signup");
   document.getElementById("authSubmitBtn").textContent = state.authMode === "login" ? "लॉगिन" : "अकाउंट तयार करा";
   document.getElementById("authSwitchRow").innerHTML = state.authMode === "login" ? 'अकाउंट नाही? <span class="switch-link" onclick="toggleAuthMode()">नवीन बनवा</span>' : 'आधीच अकाउंट आहे? <span class="switch-link" onclick="toggleAuthMode()">लॉगिन करा</span>';
+  document.getElementById("authForgotRow").classList.toggle("hidden", state.authMode !== "login");
+}
+async function forgotPassword(){
+  const email = document.getElementById("authEmail").value.trim();
+  if (!email) { showToast("आधी वरती तुमचा ईमेल टाका"); return; }
+  try { await apiRecover(email); showToast("पासवर्ड रीसेट लिंक "+email+" वर पाठवली — इनबॉक्स तपासा"); }
+  catch(e) { showToast("त्रुटी: " + e.message); }
 }
 document.addEventListener("DOMContentLoaded", ()=>{
   document.getElementById("authSubmitBtn").addEventListener("click", submitAuth);
@@ -428,9 +540,12 @@ function logout(){
 }
 
 /* ================= Mapping ================= */
-function mapSite(r){ return { id:r.id, name:r.name, location:r.location, budget: r.budget!=null ? Number(r.budget) : null }; }
-function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin }; }
-function mapContractor(r){ return { id:r.id, name:r.name, workType:r.work_type, contact:r.contact, gstin:r.gstin }; }
+function mapSite(r){ return { id:r.id, name:r.name, location:r.location, budget: r.budget!=null ? Number(r.budget) : null, active: r.active!==false }; }
+function mapSupplier(r){ return { id:r.id, name:r.name, category:r.category, contact:r.contact, gstin:r.gstin, active: r.active!==false }; }
+function mapContractor(r){ return { id:r.id, name:r.name, workType:r.work_type, contact:r.contact, gstin:r.gstin, active: r.active!==false }; }
+function activeSites(){ return state.sites.filter(s=>s.active!==false); }
+function activeSuppliers(){ return state.suppliers.filter(s=>s.active!==false); }
+function activeContractors(){ return state.contractors.filter(s=>s.active!==false); }
 function mapTxn(r, profMap){
   return { id:r.id, siteId:r.site_id, supplierId:r.supplier_id, contractorId:r.contractor_id, partyType:r.party_type || (r.supplier_id?"supplier":(r.contractor_id?"contractor":"none")), category:r.category,
     taxableAmount:Number(r.taxable_amount||0), gstRate:Number(r.gst_rate||0), gstAmount:Number(r.gst_amount||0), totalAmount:Number(r.total_amount||0),
@@ -487,38 +602,48 @@ function ownerGuard(){ if(!isOwner()){ showToast(LANG==="en"?"Only Admin can edi
 const persist = async () => {};
 
 async function addSite(name, location, budget){ if (!name.trim()) return; try { const rows=await sb("/rest/v1/sites",{method:"POST",token:state.session.access_token,body:[{name:name.trim(),location:location.trim(),budget:budget?Number(budget):null}]}); state.sites.push(mapSite(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteSite(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/sites?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.sites=state.sites.filter(s=>s.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function updateSite(id, name, location, budget){ if(!ownerGuard()) return; try { await sb("/rest/v1/sites?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{name:name.trim(),location:location.trim(),budget:budget?Number(budget):null}}); const s=state.sites.find(x=>x.id===id); if(s){ s.name=name.trim(); s.location=location.trim(); s.budget=budget?Number(budget):null; } showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteSite(id){ if(!ownerGuard()) return; if(!confirm("ही साईट आर्काइव्ह करायची का? — जुना इतिहास (बिलं, RA बिलं इ.) सुरक्षित राहील, पण ही साईट नवीन नोंदीसाठी यादीत दिसणार नाही.")) return; try { await sb("/rest/v1/sites?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{active:false}}); const s=state.sites.find(x=>x.id===id); if(s) s.active=false; showToast(LANG==="en"?"Archived":"आर्काइव्ह केलं"); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function restoreSite(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/sites?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{active:true}}); const s=state.sites.find(x=>x.id===id); if(s) s.active=true; renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addSupplier(name, category, contact, gstin){ if (!name.trim()) return; try { const rows=await sb("/rest/v1/suppliers",{method:"POST",token:state.session.access_token,body:[{name:name.trim(),category,contact:contact.trim(),gstin:gstin.trim()}]}); state.suppliers.push(mapSupplier(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteSupplier(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/suppliers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.suppliers=state.suppliers.filter(s=>s.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function updateSupplier(id, name, category, contact, gstin){ if(!ownerGuard()) return; try { await sb("/rest/v1/suppliers?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{name:name.trim(),category,contact:contact.trim(),gstin:gstin.trim()}}); const s=state.suppliers.find(x=>x.id===id); if(s){ s.name=name.trim(); s.category=category; s.contact=contact.trim(); s.gstin=gstin.trim(); } showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteSupplier(id){ if(!ownerGuard()) return; if(!confirm("हा सप्लायर आर्काइव्ह करायचा का? — जुनी बिलं सुरक्षित राहतील, फक्त नवीन नोंदीसाठी यादीत दिसणार नाही.")) return; try { await sb("/rest/v1/suppliers?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{active:false}}); const s=state.suppliers.find(x=>x.id===id); if(s) s.active=false; showToast(LANG==="en"?"Archived":"आर्काइव्ह केलं"); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function restoreSupplier(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/suppliers?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{active:true}}); const s=state.suppliers.find(x=>x.id===id); if(s) s.active=true; renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addContractor(name, workType, contact, gstin){ if (!name.trim()) return; try { const rows=await sb("/rest/v1/contractors",{method:"POST",token:state.session.access_token,body:[{name:name.trim(),work_type:workType,contact:contact.trim(),gstin:gstin.trim()}]}); state.contractors.push(mapContractor(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteContractor(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/contractors?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.contractors=state.contractors.filter(c=>c.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function updateContractor(id, name, workType, contact, gstin){ if(!ownerGuard()) return; try { await sb("/rest/v1/contractors?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{name:name.trim(),work_type:workType,contact:contact.trim(),gstin:gstin.trim()}}); const c=state.contractors.find(x=>x.id===id); if(c){ c.name=name.trim(); c.workType=workType; c.contact=contact.trim(); c.gstin=gstin.trim(); } showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteContractor(id){ if(!ownerGuard()) return; if(!confirm("हा कॉन्ट्रॅक्टर आर्काइव्ह करायचा का? — जुनी कामं/RA बिलं सुरक्षित राहतील.")) return; try { await sb("/rest/v1/contractors?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{active:false}}); const c=state.contractors.find(x=>x.id===id); if(c) c.active=false; showToast(LANG==="en"?"Archived":"आर्काइव्ह केलं"); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function restoreContractor(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/contractors?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{active:true}}); const c=state.contractors.find(x=>x.id===id); if(c) c.active=true; renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addTxn(tx){ try { const body=[{ site_id:tx.siteId, supplier_id:tx.partyType==="supplier"?tx.supplierId||null:null, contractor_id:tx.partyType==="contractor"?tx.contractorId||null:null, party_type:tx.partyType||"none", category:tx.category, taxable_amount:tx.taxableAmount, gst_rate:tx.gstRate, gst_amount:tx.gstAmount, total_amount:tx.totalAmount, bill_no:tx.billNo, txn_date:tx.date, status:tx.status, mode:tx.mode, entered_by:state.session.user.id, item_name:tx.itemName||null, quantity:tx.quantity?Number(tx.quantity):null, unit:tx.unit||null }]; const rows=await sb("/rest/v1/transactions",{method:"POST",token:state.session.access_token,body}); state.txns.unshift(mapTxn(rows[0],state.profiles)); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteTxn(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.txns=state.txns.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function markPaid(id){ if(!ownerGuard()) return; if(!confirm("PAID करायचं का?")) return; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const x=state.txns.find(t=>t.id===id); if(x) x.status="paid"; showToast("PAID केलं"); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteTxn(id){ if(!ownerGuard()) return; if(!confirm("ही नोंद डिलीट करायची का?")) return; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.txns=state.txns.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function toggleStatus(id){ if(!ownerGuard()) return; const x=state.txns.find(t=>t.id===id); if(!x) return; const ns = x.status==="paid"?"pending":"paid"; try { await sb("/rest/v1/transactions?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:ns}}); x.status=ns; showToast(ns==="paid"?"PAID केलं":"PENDING केलं"); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+const markPaid = toggleStatus;
+async function toggleRaStatus(id){ if(!ownerGuard()) return; const b=state.raBills.find(x=>x.id===id); if(!b) return; const ns=b.status==="paid"?"pending":"paid"; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:ns}}); b.status=ns; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+const markRaPaid = toggleRaStatus;
+async function toggleMachineryStatus(id){ if(!ownerGuard()) return; const m=state.machinery.find(x=>x.id===id); if(!m) return; const ns=m.status==="paid"?"pending":"paid"; try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:ns}}); m.status=ns; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+const markMachineryPaid = toggleMachineryStatus;
+async function toggleLaborStatus(id){ if(!ownerGuard()) return; const l=state.labor.find(x=>x.id===id); if(!l) return; const ns=l.status==="paid"?"pending":"paid"; try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:ns}}); l.status=ns; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+const markLaborPaid = toggleLaborStatus;
 async function addUsage(u){ try { const body=[{ site_id:u.siteId, item_name:u.itemName.trim(), quantity:Number(u.quantity), unit:u.unit||null, usage_date:u.date, note:u.note||null, value:u.value?Number(u.value):null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/material_usage",{method:"POST",token:state.session.access_token,body}); state.usage.unshift(mapUsage(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteUsage(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/material_usage?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.usage=state.usage.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteUsage(id){ if(!ownerGuard()) return; if(!confirm("ही वापर-नोंद डिलीट करायची का?")) return; try { await sb("/rest/v1/material_usage?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.usage=state.usage.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addAdvance(a){ try { const body=[{ supplier_id:a.partyType==="contractor"?null:(a.supplierId||null), contractor_id:a.partyType==="contractor"?(a.contractorId||null):null, party_type:a.partyType||"supplier", site_id:a.siteId||null, amount:Number(a.amount), adv_date:a.date, mode:a.mode, note:a.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/advances",{method:"POST",token:state.session.access_token,body}); state.advances.unshift(mapAdvance(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteAdvance(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/advances?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.advances=state.advances.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteAdvance(id){ if(!ownerGuard()) return; if(!confirm("हा ॲडव्हान्स डिलीट करायचा का?")) return; try { await sb("/rest/v1/advances?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.advances=state.advances.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addUnit(u){ try { const body=[{ site_id:u.siteId, unit_no:u.unitNo.trim(), unit_type:u.unitType||null, area_sqft:u.area?Number(u.area):null, price:u.price?Number(u.price):null, status:"available" }]; const rows=await sb("/rest/v1/units",{method:"POST",token:state.session.access_token,body}); state.units.push(mapUnit(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteUnit(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/units?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.units=state.units.filter(u=>u.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteUnit(id){ if(!ownerGuard()) return; if(!confirm("हे युनिट डिलीट करायचं का?")) return; try { await sb("/rest/v1/units?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.units=state.units.filter(u=>u.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function setUnitStatus(id,status){ if(!ownerGuard()) return; try { await sb("/rest/v1/units?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status}}); const u=state.units.find(x=>x.id===id); if(u) u.status=status; renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addCustomer(c){ try { const body=[{ unit_id:c.unitId||null, name:c.name.trim(), contact:c.contact||null, email:c.email||null, booking_date:c.bookingDate||null, agreement_value:Number(c.agreementValue), note:c.note||null }]; const rows=await sb("/rest/v1/customers",{method:"POST",token:state.session.access_token,body}); state.customers.unshift(mapCustomer(rows[0])); if(c.unitId){ await setUnitStatus(c.unitId,"booked"); } showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteCustomer(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/customers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.customers=state.customers.filter(c=>c.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteCustomer(id){ if(!ownerGuard()) return; if(!confirm("हा कस्टमर डिलीट केला की त्याच्या सगळ्या पावत्याही मिटतील. पक्कं आहे का?")) return; try { await sb("/rest/v1/customers?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.customers=state.customers.filter(c=>c.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addReceipt(r){ try { const body=[{ customer_id:r.customerId, amount:Number(r.amount), receipt_date:r.date, mode:r.mode, note:r.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/receipts",{method:"POST",token:state.session.access_token,body}); state.receipts.unshift(mapReceipt(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteReceipt(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/receipts?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.receipts=state.receipts.filter(r=>r.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteReceipt(id){ if(!ownerGuard()) return; if(!confirm("ही पावती डिलीट करायची का?")) return; try { await sb("/rest/v1/receipts?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.receipts=state.receipts.filter(r=>r.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addWorkItem(w){ try { const body=[{ site_id:w.siteId, work_name:w.workName.trim(), contractor_id:w.contractorId||null, total_qty:w.totalQty?Number(w.totalQty):null, unit:w.unit||null, rate:w.rate?Number(w.rate):null, retention_pct:w.retentionPct?Number(w.retentionPct):0 }]; const rows=await sb("/rest/v1/work_items",{method:"POST",token:state.session.access_token,body}); state.workItems.push(mapWorkItem(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteWorkItem(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/work_items?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.workItems=state.workItems.filter(w=>w.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteWorkItem(id){ if(!ownerGuard()) return; if(!confirm("हा कामाचा प्रकार डिलीट केला की त्याची सगळी RA बिलं मिटतील. पक्कं आहे का?")) return; try { await sb("/rest/v1/work_items?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.workItems=state.workItems.filter(w=>w.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addRaBill(r){ try { const body=[{ work_item_id:r.workItemId, bill_no:r.billNo, bill_date:r.date, cumulative_qty:Number(r.cumulativeQty), cumulative_value:Number(r.cumulativeValue), retention_amount:Number(r.retentionAmount), previous_paid:Number(r.previousPaid), net_payable:Number(r.netPayable), status:r.status||"pending", note:r.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/ra_bills",{method:"POST",token:state.session.access_token,body}); state.raBills.push(mapRaBill(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function markRaPaid(id){ if(!ownerGuard()) return; if(!confirm("RA बिल PAID करायचं का?")) return; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const b=state.raBills.find(x=>x.id===id); if(b) b.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function deleteRaBill(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.raBills=state.raBills.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteRaBill(id){ if(!ownerGuard()) return; if(!confirm("हे RA बिल डिलीट करायचं का?")) return; try { await sb("/rest/v1/ra_bills?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.raBills=state.raBills.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addMachinery(m){ try { const body=[{ site_id:m.siteId, machine_name:m.machineName.trim(), rate:m.rate?Number(m.rate):null, rate_unit:m.rateUnit, qty:m.qty?Number(m.qty):null, fuel_cost:Number(m.fuelCost||0), total_cost:Number(m.totalCost), log_date:m.date, mode:m.mode, status:m.status, note:m.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/machinery_log",{method:"POST",token:state.session.access_token,body}); state.machinery.unshift(mapMachinery(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteMachinery(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.machinery=state.machinery.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function markMachineryPaid(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const m=state.machinery.find(x=>x.id===id); if(m) m.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteMachinery(id){ if(!ownerGuard()) return; if(!confirm("ही मशिनरी नोंद डिलीट करायची का?")) return; try { await sb("/rest/v1/machinery_log?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.machinery=state.machinery.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addLabor(l){ try { const body=[{ site_id:l.siteId, worker_name:l.workerName.trim(), category:l.category||null, att_date:l.date, days:Number(l.days), wage_rate:l.wageRate?Number(l.wageRate):null, wage_amount:Number(l.wageAmount), status:l.status, note:l.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/labor_attendance",{method:"POST",token:state.session.access_token,body}); state.labor.unshift(mapLabor(rows[0])); showToast(t("save")); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteLabor(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.labor=state.labor.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
-async function markLaborPaid(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"PATCH",token:state.session.access_token,body:{status:"paid"}}); const l=state.labor.find(x=>x.id===id); if(l) l.status="paid"; rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteLabor(id){ if(!ownerGuard()) return; if(!confirm("ही मजूर-हजेरी डिलीट करायची का?")) return; try { await sb("/rest/v1/labor_attendance?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.labor=state.labor.filter(x=>x.id!==id); rerenderCurrentTab(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 async function addDocument(d){ try { const body=[{ site_id:d.siteId||null, doc_name:d.docName.trim(), category:d.category||null, expiry_date:d.expiryDate||null, link:d.link||null, note:d.note||null, created_by:state.session.user.id }]; const rows=await sb("/rest/v1/documents",{method:"POST",token:state.session.access_token,body}); state.documents.unshift(mapDocument(rows[0])); showToast(t("save")); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); throw e; } }
-async function deleteDocument(id){ if(!ownerGuard()) return; try { await sb("/rest/v1/documents?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.documents=state.documents.filter(x=>x.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
+async function deleteDocument(id){ if(!ownerGuard()) return; if(!confirm("हा डॉक्युमेंट डिलीट करायचा का?")) return; try { await sb("/rest/v1/documents?id=eq."+id,{method:"DELETE",token:state.session.access_token}); state.documents=state.documents.filter(x=>x.id!==id); renderMasters(); } catch(e){ showToast("त्रुटी: "+e.message); } }
 
 /* ================= Totals ================= */
 function computeTotals(){
@@ -579,7 +704,7 @@ function txnTableHtml(txns, showSite, opts){
       + '<div class="right">'+inr(t.taxableAmount)+'</div>'
       + '<div class="right" style="color:var(--amber);font-size:11.5px;">'+(t.gstRate? t.gstRate+'% '+inr(t.gstAmount) : "—")+'</div>'
       + '<div class="right" style="font-weight:600;">'+inr(t.totalAmount)+'</div>'
-      + '<div>'+stampHtml(t.status)+(t.status==="pending"?' <button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markPaid(\''+t.id+'\')">✓</button>':'')+'</div>'
+      + '<div>'+stampHtml(t.status)+' <button class="icon-btn" title="toggle" style="color:var(--steel);font-weight:700;" onclick="markPaid(\''+t.id+'\')">⇄</button>'+'</div>'
       + '<button class="icon-btn no-print" onclick="deleteTxn(\''+t.id+'\')">🗑</button>'
       + '</div>';
   });
@@ -637,6 +762,7 @@ function renderDashboard(){
     + '<div style="flex:1 1 380px;">'+sectionHtml(LANG==="en"?"Top Suppliers":"टॉप सप्लायर्स","Top Suppliers", supplierListHtml)+'</div>'
     + '<div style="flex:1 1 300px;">'+sectionHtml(LANG==="en"?"By Category":"कॅटेगरी-वाईज","By Category", '<div class="chart-box" style="height:240px;"><canvas id="catChart"></canvas></div>')+'</div>'
     + '</div>';
+  html += sectionHtml("","", googleBackupWidget());
   document.getElementById("bodyInner").innerHTML = html;
   if (state.charts && state.charts.site) state.charts.site.destroy();
   state.charts = state.charts || {};
@@ -686,9 +812,9 @@ if (!state.entryType) state.entryType = "purchase";
 
 /* ---- Purchase / Expense ---- */
 function entryFormPurchase(){
-  if (!addForm.siteId) addForm.siteId = state.sites[0].id;
+  if (!addForm.siteId) addForm.siteId = (activeSites()[0]||{}).id;
   if (!addForm.partyType) addForm.partyType = "none";
-  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const siteOpts = activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===addForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===addForm.category?"selected":"")+'>'+esc(c)+'</option>').join("");
   const gstPills = GST_RATES.map(r=>'<button type="button" class="pill '+(addForm.gstRate===r?"active-amber":"")+'" onclick="setGstRate('+r+')">'+(r===0?(LANG==="en"?"None":"नाही"):r+"%")+'</button>').join("");
   const modeBtns = MODES.map(m=>'<button type="button" class="mode-btn '+(addForm.mode===m.id?"active":"")+'" onclick="setMode(\''+m.id+'\')">'+esc(m.label)+'</button>').join("");
@@ -701,10 +827,10 @@ function entryFormPurchase(){
   }).join("");
   let partySelectHtml = "";
   if (addForm.partyType==="supplier") {
-    const opts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    const opts = activeSuppliers().map(s=>'<option value="'+s.id+'" '+(s.id===addForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
     partySelectHtml = '<div style="margin-bottom:14px;"><label class="form-label">'+t("partySupplier")+'</label><select class="field" onchange="addForm.supplierId=this.value">'+(opts||'<option value="">'+(LANG==="en"?"(add a supplier under Masters)":"(मास्टर्समध्ये सप्लायर जोडा)")+'</option>')+'</select></div>';
   } else if (addForm.partyType==="contractor") {
-    const opts = state.contractors.map(s=>'<option value="'+s.id+'" '+(s.id===addForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    const opts = activeContractors().map(s=>'<option value="'+s.id+'" '+(s.id===addForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
     partySelectHtml = '<div style="margin-bottom:14px;"><label class="form-label">'+t("partyContractor")+'</label><select class="field" onchange="addForm.contractorId=this.value">'+(opts||'<option value="">'+(LANG==="en"?"(add a contractor under Masters)":"(मास्टर्समध्ये कॉन्ट्रॅक्टर जोडा)")+'</option>')+'</select></div>';
   }
   return '<div class="form-card">'
@@ -753,8 +879,8 @@ async function submitTxn(){
 
 /* ---- Material Usage ---- */
 function entryFormUsage(){
-  if (!usageForm.siteId) usageForm.siteId = state.sites[0].id;
-  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===usageForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  if (!usageForm.siteId) usageForm.siteId = (activeSites()[0]||{}).id;
+  const siteOpts = activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===usageForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const purchasedNames=[]; state.txns.forEach(t=>{ if(t.itemName) purchasedNames.push(t.itemName); });
   const itemDatalist = buildItemDatalist("itemList", purchasedNames);
   return '<div class="form-card">'
@@ -782,15 +908,15 @@ function entryFormAdvance(){
   const partyPills = ['supplier','contractor'].map(p=>'<button type="button" class="pill '+(advanceForm.partyType===p?"active-amber":"")+'" onclick="advanceForm.partyType=\''+p+'\'; renderEntry();">'+(p==="supplier"?t("partySupplier"):t("partyContractor"))+'</button>').join("");
   let partySelect = "";
   if (advanceForm.partyType==="supplier") {
-    if (!advanceForm.supplierId && state.suppliers[0]) advanceForm.supplierId = state.suppliers[0].id;
-    const opts = state.suppliers.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    if (!advanceForm.supplierId && activeSuppliers()[0]) advanceForm.supplierId = activeSuppliers()[0].id;
+    const opts = activeSuppliers().map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.supplierId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
     partySelect = '<select class="field" onchange="advanceForm.supplierId=this.value">'+(opts||'<option value="">—</option>')+'</select>';
   } else {
-    if (!advanceForm.contractorId && state.contractors[0]) advanceForm.contractorId = state.contractors[0].id;
-    const opts = state.contractors.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+    if (!advanceForm.contractorId && activeContractors()[0]) advanceForm.contractorId = activeContractors()[0].id;
+    const opts = activeContractors().map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
     partySelect = '<select class="field" onchange="advanceForm.contractorId=this.value">'+(opts||'<option value="">—</option>')+'</select>';
   }
-  const siteOptsAdv = '<option value="">'+(LANG==="en"?"(no site)":"(कोणतीही साईट नाही)")+'</option>' + state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const siteOptsAdv = '<option value="">'+(LANG==="en"?"(no site)":"(कोणतीही साईट नाही)")+'</option>' + activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===advanceForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   return '<div class="form-card">'
     + '<div style="margin-bottom:10px;"><label class="form-label">'+(LANG==="en"?"To whom?":"कोणाला?")+'</label><div class="pill-row">'+partyPills+'</div></div>'
     + '<div class="form-grid2"><div><label class="form-label">'+(advanceForm.partyType==="supplier"?t("partySupplier"):t("partyContractor"))+'</label>'+partySelect+'</div>'
@@ -871,8 +997,8 @@ async function submitRaEntry(){
 
 /* ---- Machinery ---- */
 function entryFormMach(){
-  if (!machForm.siteId) machForm.siteId = state.sites[0].id;
-  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===machForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  if (!machForm.siteId) machForm.siteId = (activeSites()[0]||{}).id;
+  const siteOpts = activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===machForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const rate=Number(machForm.rate)||0, qty=Number(machForm.qty)||0, fuel=Number(machForm.fuelCost)||0; const autoTotal=rate*qty+fuel;
   return '<div class="form-card">'
     + '<div class="form-grid2"><div><label class="form-label">'+t("site")+'</label><select class="field" onchange="machForm.siteId=this.value">'+siteOpts+'</select></div>'
@@ -900,8 +1026,8 @@ async function submitMachEntry(){
 
 /* ---- Labor ---- */
 function entryFormLabor(){
-  if (!laborForm.siteId) laborForm.siteId = state.sites[0].id;
-  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===laborForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  if (!laborForm.siteId) laborForm.siteId = (activeSites()[0]||{}).id;
+  const siteOpts = activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===laborForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const knownWorkers=[...new Set(state.labor.map(l=>l.workerName))];
   const workerDatalist='<datalist id="workerList">'+knownWorkers.map(n=>'<option value="'+esc(n)+'">').join("")+'</datalist>';
   const autoWage=(Number(laborForm.wageRate)||0)*(Number(laborForm.days)||0);
@@ -932,7 +1058,7 @@ async function submitLaborEntry(){
 }
 
 /* ================= MASTERS ================= */
-const setupForm = { siteName:"", siteLoc:"", siteBudget:"", supName:"", supCat:CATS[0], supContact:"", supGstin:"" };
+const setupForm = { editId:null, siteName:"", siteLoc:"", siteBudget:"", supEditId:null, supName:"", supCat:CATS[0], supContact:"", supGstin:"" };
 const unitForm = { siteId:null, unitNo:"", unitType:"", area:"", price:"" };
 const custForm = { unitId:"", name:"", contact:"", email:"", bookingDate:new Date().toISOString().slice(0,10), agreementValue:"", note:"" };
 const workForm = { siteId:null, workName:"", contractorId:"", totalQty:"", unit:"", rate:"", retentionPct:"5" };
@@ -951,47 +1077,91 @@ function renderMasters(){
   else if (state.masterTab==="docs") inner = mastersDocs();
   document.getElementById("bodyInner").innerHTML = subtabsHtml(tabs, state.masterTab, "setMasterTab") + inner;
 }
+const masterSearch = { sites:"", suppliers:"", contractors:"", units:"", customers:"" };
+function searchBoxHtml(key, placeholder){
+  return '<input class="field" style="max-width:320px;" placeholder="🔍 '+esc(placeholder)+'" value="'+esc(masterSearch[key])+'" oninput="masterSearch[\''+key+'\']=this.value; renderMasters();">';
+}
+function matchesSearch(name, key){ return !masterSearch[key] || (name||"").toLowerCase().includes(masterSearch[key].toLowerCase()); }
+
 function mastersSites(){
-  let rows=''; state.sites.forEach(s=>{ rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(s.name)+'</span> <span style="font-size:12px;color:var(--sub);">'+(s.location?'· '+esc(s.location):'')+(s.budget?' · '+(LANG==="en"?"budget":"बजेट")+' '+inr(s.budget):'')+'</span></div><button class="icon-btn" onclick="deleteSite(\''+s.id+'\')">🗑</button></div>'; });
+  const editing = setupForm.editId ? state.sites.find(s=>s.id===setupForm.editId) : null;
+  let rows=''; state.sites.filter(s=>s.active!==false && matchesSearch(s.name,"sites")).forEach(s=>{
+    rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(s.name)+'</span> <span style="font-size:12px;color:var(--sub);">'+(s.location?'· '+esc(s.location):'')+(s.budget?' · '+(LANG==="en"?"budget":"बजेट")+' '+inr(s.budget):'')+'</span></div><div><button class="icon-btn" onclick="editSite(\''+s.id+'\')">✎</button><button class="icon-btn" onclick="deleteSite(\''+s.id+'\')">🗄</button></div></div>';
+  });
+  const archived = state.sites.filter(s=>s.active===false);
+  let archivedHtml = '';
+  if (archived.length) { let ar=''; archived.forEach(s=>{ ar += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;color:var(--sub);">'+esc(s.name)+'</span> <span style="font-size:11px;color:var(--sub);">'+(LANG==="en"?"(archived)":"(आर्काइव्ह्ड)")+'</span></div><button class="icon-btn" onclick="restoreSite(\''+s.id+'\')" style="color:var(--green);">↺</button></div>'; });
+    archivedHtml = sectionHtml(LANG==="en"?"Archived Sites":"आर्काइव्ह्ड साईट्स","", '<div class="list-panel">'+ar+'</div>'); }
   const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + (editing?'<div style="font-size:11.5px;color:var(--amber);font-weight:600;margin-bottom:8px;">✎ '+(LANG==="en"?"Editing":"एडिट करत आहात")+': '+esc(editing.name)+' <span class="switch-link" onclick="cancelEditSite()">('+(LANG==="en"?"cancel":"रद्द करा")+')</span></div>':'')
     + '<input class="field" placeholder="'+(LANG==="en"?"Site name (e.g. Riverside Tower)":"साईटचं नाव (उदा. रिव्हरसाईड टॉवर)")+'" value="'+esc(setupForm.siteName)+'" oninput="setupForm.siteName=this.value;">'
     + '<input class="field" placeholder="'+(LANG==="en"?"Location (optional)":"लोकेशन (ऐच्छिक)")+'" value="'+esc(setupForm.siteLoc)+'" oninput="setupForm.siteLoc=this.value;">'
     + '<input class="field" type="number" placeholder="'+(LANG==="en"?"Approx budget ₹ (optional)":"अंदाजे बजेट ₹ (ऐच्छिक)")+'" value="'+esc(setupForm.siteBudget)+'" oninput="setupForm.siteBudget=this.value;">'
-    + '<button class="small-btn" style="background:var(--steel);" onclick="submitSite()">＋ '+t("add")+'</button></div>';
-  return sectionHtml(t("mastersSites"),"", formHtml + (rows?'<div class="list-panel">'+rows+'</div>':''));
+    + '<button class="small-btn" style="background:var(--steel);" onclick="submitSite()">'+(editing?('✓ '+t("save")):'＋ '+t("add"))+'</button></div>';
+  return sectionHtml(t("mastersSites"),"", formHtml + searchBoxHtml("sites", LANG==="en"?"Search sites...":"साईट शोधा...") + '<div style="height:10px;"></div>' + (rows?'<div class="list-panel">'+rows+'</div>':'')) + archivedHtml;
 }
-function submitSite(){ addSite(setupForm.siteName, setupForm.siteLoc, setupForm.siteBudget); setupForm.siteName=""; setupForm.siteLoc=""; setupForm.siteBudget=""; }
+function editSite(id){ const s=state.sites.find(x=>x.id===id); if(!s) return; setupForm.editId=id; setupForm.siteName=s.name; setupForm.siteLoc=s.location||""; setupForm.siteBudget=s.budget||""; renderMasters(); }
+function cancelEditSite(){ setupForm.editId=null; setupForm.siteName=""; setupForm.siteLoc=""; setupForm.siteBudget=""; renderMasters(); }
+function submitSite(){
+  if (setupForm.editId) { updateSite(setupForm.editId, setupForm.siteName, setupForm.siteLoc, setupForm.siteBudget); setupForm.editId=null; }
+  else addSite(setupForm.siteName, setupForm.siteLoc, setupForm.siteBudget);
+  setupForm.siteName=""; setupForm.siteLoc=""; setupForm.siteBudget="";
+}
 function mastersSuppliers(){
   const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===setupForm.supCat?"selected":"")+'>'+esc(c)+'</option>').join("");
-  let rows=''; state.suppliers.forEach(s=>{ rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(s.name)+'</span> <span style="font-size:12px;color:var(--sub);">· '+esc(s.category)+(s.gstin?' · '+esc(s.gstin):'')+'</span></div><button class="icon-btn" onclick="deleteSupplier(\''+s.id+'\')">🗑</button></div>'; });
+  const editing = setupForm.supEditId ? state.suppliers.find(s=>s.id===setupForm.supEditId) : null;
+  let rows=''; state.suppliers.filter(s=>s.active!==false && matchesSearch(s.name,"suppliers")).forEach(s=>{
+    rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(s.name)+'</span> <span style="font-size:12px;color:var(--sub);">· '+esc(s.category)+(s.gstin?' · '+esc(s.gstin):'')+'</span></div><div><button class="icon-btn" onclick="editSupplier(\''+s.id+'\')">✎</button><button class="icon-btn" onclick="deleteSupplier(\''+s.id+'\')">🗄</button></div></div>';
+  });
+  const archived = state.suppliers.filter(s=>s.active===false);
+  let archivedHtml=''; if(archived.length){ let ar=''; archived.forEach(s=>{ ar+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;color:var(--sub);">'+esc(s.name)+'</span></div><button class="icon-btn" onclick="restoreSupplier(\''+s.id+'\')" style="color:var(--green);">↺</button></div>'; }); archivedHtml=sectionHtml(LANG==="en"?"Archived Suppliers":"आर्काइव्ह्ड सप्लायर्स","", '<div class="list-panel">'+ar+'</div>'); }
   const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + (editing?'<div style="font-size:11.5px;color:var(--amber);font-weight:600;margin-bottom:8px;">✎ '+esc(editing.name)+' <span class="switch-link" onclick="cancelEditSupplier()">('+(LANG==="en"?"cancel":"रद्द करा")+')</span></div>':'')
     + '<input class="field" placeholder="'+(LANG==="en"?"Name":"नाव")+'" value="'+esc(setupForm.supName)+'" oninput="setupForm.supName=this.value;">'
     + '<select class="field" onchange="setupForm.supCat=this.value">'+catOpts+'</select>'
     + '<input class="field" placeholder="'+(LANG==="en"?"Contact (optional)":"कॉन्टॅक्ट नंबर (ऐच्छिक)")+'" value="'+esc(setupForm.supContact)+'" oninput="setupForm.supContact=this.value;">'
     + '<input class="field" placeholder="GSTIN '+(LANG==="en"?"(optional)":"(ऐच्छिक)")+'" value="'+esc(setupForm.supGstin)+'" oninput="setupForm.supGstin=this.value;">'
-    + '<button class="small-btn" style="background:var(--orange);" onclick="submitSupplier()">＋ '+t("add")+'</button></div>';
-  return sectionHtml(t("mastersSuppliers"),"", formHtml + (rows?'<div class="list-panel">'+rows+'</div>':''));
+    + '<button class="small-btn" style="background:var(--orange);" onclick="submitSupplier()">'+(editing?('✓ '+t("save")):'＋ '+t("add"))+'</button></div>';
+  return sectionHtml(t("mastersSuppliers"),"", formHtml + searchBoxHtml("suppliers", LANG==="en"?"Search suppliers...":"सप्लायर शोधा...") + '<div style="height:10px;"></div>' + (rows?'<div class="list-panel">'+rows+'</div>':'')) + archivedHtml;
 }
-function submitSupplier(){ addSupplier(setupForm.supName, setupForm.supCat, setupForm.supContact, setupForm.supGstin); setupForm.supName=""; setupForm.supContact=""; setupForm.supGstin=""; }
+function editSupplier(id){ const s=state.suppliers.find(x=>x.id===id); if(!s) return; setupForm.supEditId=id; setupForm.supName=s.name; setupForm.supCat=s.category; setupForm.supContact=s.contact||""; setupForm.supGstin=s.gstin||""; renderMasters(); }
+function cancelEditSupplier(){ setupForm.supEditId=null; setupForm.supName=""; setupForm.supContact=""; setupForm.supGstin=""; renderMasters(); }
+function submitSupplier(){
+  if (setupForm.supEditId) { updateSupplier(setupForm.supEditId, setupForm.supName, setupForm.supCat, setupForm.supContact, setupForm.supGstin); setupForm.supEditId=null; }
+  else addSupplier(setupForm.supName, setupForm.supCat, setupForm.supContact, setupForm.supGstin);
+  setupForm.supName=""; setupForm.supContact=""; setupForm.supGstin="";
+}
 
-const contractorForm = { name:"", workType:"", contact:"", gstin:"" };
+const contractorForm = { editId:null, name:"", workType:"", contact:"", gstin:"" };
 function mastersContractors(){
   const catOpts = CATS.map(c=>'<option value="'+c+'" '+(c===contractorForm.workType?"selected":"")+'>'+esc(c)+'</option>').join("");
-  let rows=''; state.contractors.forEach(c=>{ rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(c.name)+'</span> <span style="font-size:12px;color:var(--sub);">'+(c.workType?'· '+esc(c.workType):'')+(c.gstin?' · '+esc(c.gstin):'')+'</span></div><button class="icon-btn" onclick="deleteContractor(\''+c.id+'\')">🗑</button></div>'; });
+  const editing = contractorForm.editId ? state.contractors.find(c=>c.id===contractorForm.editId) : null;
+  let rows=''; state.contractors.filter(c=>c.active!==false && matchesSearch(c.name,"contractors")).forEach(c=>{
+    rows += '<div class="list-row"><div><span style="font-weight:600;font-size:13.5px;">'+esc(c.name)+'</span> <span style="font-size:12px;color:var(--sub);">'+(c.workType?'· '+esc(c.workType):'')+(c.gstin?' · '+esc(c.gstin):'')+'</span></div><div><button class="icon-btn" onclick="editContractor(\''+c.id+'\')">✎</button><button class="icon-btn" onclick="deleteContractor(\''+c.id+'\')">🗄</button></div></div>';
+  });
+  const archived = state.contractors.filter(c=>c.active===false);
+  let archivedHtml=''; if(archived.length){ let ar=''; archived.forEach(c=>{ ar+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;color:var(--sub);">'+esc(c.name)+'</span></div><button class="icon-btn" onclick="restoreContractor(\''+c.id+'\')" style="color:var(--green);">↺</button></div>'; }); archivedHtml=sectionHtml(LANG==="en"?"Archived Contractors":"आर्काइव्ह्ड कॉन्ट्रॅक्टर्स","", '<div class="list-panel">'+ar+'</div>'); }
   const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
+    + (editing?'<div style="font-size:11.5px;color:var(--amber);font-weight:600;margin-bottom:8px;">✎ '+esc(editing.name)+' <span class="switch-link" onclick="cancelEditContractor()">('+(LANG==="en"?"cancel":"रद्द करा")+')</span></div>':'')
     + '<input class="field" placeholder="'+(LANG==="en"?"Name":"नाव")+'" value="'+esc(contractorForm.name)+'" oninput="contractorForm.name=this.value;">'
     + '<select class="field" onchange="contractorForm.workType=this.value">'+catOpts+'</select>'
     + '<input class="field" placeholder="'+(LANG==="en"?"Contact (optional)":"कॉन्टॅक्ट नंबर (ऐच्छिक)")+'" value="'+esc(contractorForm.contact)+'" oninput="contractorForm.contact=this.value;">'
     + '<input class="field" placeholder="GSTIN '+(LANG==="en"?"(optional)":"(ऐच्छिक)")+'" value="'+esc(contractorForm.gstin)+'" oninput="contractorForm.gstin=this.value;">'
-    + '<button class="small-btn" style="background:var(--green);" onclick="submitContractor()">＋ '+t("add")+'</button></div>';
-  return sectionHtml(t("mastersContractors"), LANG==="en"?"People/firms doing actual work on site (supervisors, RCC, plaster, tile contractors)":"साईटवर प्रत्यक्ष काम करणारे (सुपरवायझर, RCC, प्लास्टर, टाईल कॉन्ट्रॅक्टर)", formHtml + (rows?'<div class="list-panel">'+rows+'</div>':''));
+    + '<button class="small-btn" style="background:var(--green);" onclick="submitContractor()">'+(editing?('✓ '+t("save")):'＋ '+t("add"))+'</button></div>';
+  return sectionHtml(t("mastersContractors"), LANG==="en"?"People/firms doing actual work on site (supervisors, RCC, plaster, tile contractors)":"साईटवर प्रत्यक्ष काम करणारे (सुपरवायझर, RCC, प्लास्टर, टाईल कॉन्ट्रॅक्टर)", formHtml + searchBoxHtml("contractors", LANG==="en"?"Search contractors...":"कॉन्ट्रॅक्टर शोधा...") + '<div style="height:10px;"></div>' + (rows?'<div class="list-panel">'+rows+'</div>':'')) + archivedHtml;
 }
-function submitContractor(){ addContractor(contractorForm.name, contractorForm.workType, contractorForm.contact, contractorForm.gstin); contractorForm.name=""; contractorForm.contact=""; contractorForm.gstin=""; }
+function editContractor(id){ const c=state.contractors.find(x=>x.id===id); if(!c) return; contractorForm.editId=id; contractorForm.name=c.name; contractorForm.workType=c.workType||""; contractorForm.contact=c.contact||""; contractorForm.gstin=c.gstin||""; renderMasters(); }
+function cancelEditContractor(){ contractorForm.editId=null; contractorForm.name=""; contractorForm.contact=""; contractorForm.gstin=""; renderMasters(); }
+function submitContractor(){
+  if (contractorForm.editId) { updateContractor(contractorForm.editId, contractorForm.name, contractorForm.workType, contractorForm.contact, contractorForm.gstin); contractorForm.editId=null; }
+  else addContractor(contractorForm.name, contractorForm.workType, contractorForm.contact, contractorForm.gstin);
+  contractorForm.name=""; contractorForm.contact=""; contractorForm.gstin="";
+}
 
 function mastersUnits(){
   if (state.sites.length===0) return '<div class="empty-note">'+(LANG==="en"?"Add a Site first.":"आधी साईट जोडा.")+'</div>';
-  if (!unitForm.siteId) unitForm.siteId = state.sites[0].id;
-  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===unitForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  if (!unitForm.siteId) unitForm.siteId = (activeSites()[0]||{}).id;
+  const siteOpts = activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===unitForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
     + '<div class="form-grid2"><div><label class="form-label">'+t("site")+'</label><select class="field" onchange="unitForm.siteId=this.value">'+siteOpts+'</select></div>'
     + '<div><label class="form-label">'+(LANG==="en"?"Unit No.":"युनिट नं.")+'</label><input class="field" value="'+esc(unitForm.unitNo)+'" placeholder="A-101" oninput="unitForm.unitNo=this.value;"></div></div>'
@@ -1039,9 +1209,9 @@ async function submitCustomer(){
 
 function mastersWork(){
   if (state.sites.length===0) return '<div class="empty-note">'+(LANG==="en"?"Add a Site first.":"आधी साईट जोडा.")+'</div>';
-  if (!workForm.siteId) workForm.siteId = state.sites[0].id;
-  const siteOpts = state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
-  const contractorOpts = '<option value="">'+(LANG==="en"?"(add contractor later)":"(कॉन्ट्रॅक्टर नंतर जोडा)")+'</option>' + state.contractors.map(s=>'<option value="'+s.id+'" '+(s.id===workForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  if (!workForm.siteId) workForm.siteId = (activeSites()[0]||{}).id;
+  const siteOpts = activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===workForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const contractorOpts = '<option value="">'+(LANG==="en"?"(add contractor later)":"(कॉन्ट्रॅक्टर नंतर जोडा)")+'</option>' + activeContractors().map(s=>'<option value="'+s.id+'" '+(s.id===workForm.contractorId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const formHtml = '<div class="form-card" style="margin-bottom:14px;">'
     + '<div class="form-grid2"><div><label class="form-label">'+t("site")+'</label><select class="field" onchange="workForm.siteId=this.value">'+siteOpts+'</select></div>'
     + '<div><label class="form-label">'+(LANG==="en"?"Work name":"कामाचं नाव")+'</label><input class="field" value="'+esc(workForm.workName)+'" placeholder="RCC - Slab" oninput="workForm.workName=this.value;"></div></div>'
@@ -1064,7 +1234,7 @@ function mastersWork(){
 async function submitWorkItem(){ if(!workForm.siteId||!workForm.workName.trim()){ showToast(LANG==="en"?"Enter site and work name.":"साईट व कामाचं नाव भरा."); return; } await addWorkItem(workForm); workForm.workName=""; workForm.totalQty=""; workForm.rate=""; }
 
 function mastersDocs(){
-  const siteOpts = '<option value="">'+(LANG==="en"?"(company-level)":"(कंपनी-लेव्हल)")+'</option>' + state.sites.map(s=>'<option value="'+s.id+'" '+(s.id===docForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
+  const siteOpts = '<option value="">'+(LANG==="en"?"(company-level)":"(कंपनी-लेव्हल)")+'</option>' + activeSites().map(s=>'<option value="'+s.id+'" '+(s.id===docForm.siteId?"selected":"")+'>'+esc(s.name)+'</option>').join("");
   const catOpts = DOC_CATS.map(c=>'<option value="'+c+'" '+(c===docForm.category?"selected":"")+'>'+esc(c)+'</option>').join("");
   const formHtml = '<div class="form-card" style="margin-bottom:12px;">'
     + '<div class="form-grid2"><div><label class="form-label">'+(LANG==="en"?"Document name":"डॉक्युमेंटचं नाव")+'</label><input class="field" value="'+esc(docForm.docName)+'" oninput="docForm.docName=this.value;"></div>'
@@ -1316,7 +1486,7 @@ function reportWorkDetail(workId){
   const lastBill=bills[bills.length-1]; const pct=(w.totalQty&&lastBill)?Math.round(lastBill.cumulativeQty/w.totalQty*100):null;
   let progressHtml=''; if(pct!=null){ progressHtml='<div style="margin-bottom:14px;"><div style="background:var(--line);border-radius:4px;height:10px;overflow:hidden;"><div style="width:'+Math.min(100,pct)+'%;height:100%;background:'+(pct>=100?"var(--green)":"var(--orange)")+';"></div></div><div style="font-size:12.5px;color:var(--sub);margin-top:4px;">'+pct+'% ('+lastBill.cumulativeQty+' / '+w.totalQty+' '+esc(w.unit||"")+')</div></div>'; }
   let billRows='';
-  bills.slice().reverse().forEach(b=>{ billRows += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">RA-'+b.billNo+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(b.date)+' · '+b.cumulativeQty+' '+esc(w.unit||"")+' · '+inr(b.netPayable)+'</span></div><div style="display:flex;align-items:center;gap:8px;">'+stampHtml(b.status)+(b.status==="pending"?'<button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markRaPaid(\''+b.id+'\')">✓</button>':'')+'<button class="icon-btn" onclick="deleteRaBill(\''+b.id+'\')">🗑</button></div></div>'; });
+  bills.slice().reverse().forEach(b=>{ billRows += '<div class="list-row"><div><span style="font-weight:600;font-size:13px;">RA-'+b.billNo+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(b.date)+' · '+b.cumulativeQty+' '+esc(w.unit||"")+' · '+inr(b.netPayable)+'</span></div><div style="display:flex;align-items:center;gap:8px;">'+stampHtml(b.status)+'<button class="icon-btn" title="toggle" style="color:var(--steel);font-weight:700;" onclick="markRaPaid(\''+b.id+'\')">⇄</button>'+'<button class="icon-btn" onclick="deleteRaBill(\''+b.id+'\')">🗑</button></div></div>'; });
   return '<button class="back-btn" onclick="openReportWork(null)">‹ '+t("reportProgress")+'</button>'
     + sectionHtml(w.workName, (site?site.name+' · ':'')+(contractor?contractor.name:(LANG==="en"?"No contractor":"कॉन्ट्रॅक्टर नाही")), progressHtml+(billRows?'<div class="list-panel">'+billRows+'</div>':'<div style="color:var(--sub);font-size:13px;">'+(LANG==="en"?'No RA bills yet — add one from Entry → RA Bill.':'अजून RA बिल नाही — "नोंद करा" → "RA बिल" मधून टाका.')+'</div>'));
 }
@@ -1375,13 +1545,13 @@ function reportFinance(){
 
 /* ---- Machinery / Labor logs (read-only, quick mark-paid) ---- */
 function reportMachinery(){
-  let rows=''; state.machinery.forEach(m=>{ const site=state.sites.find(s=>s.id===m.siteId); rows+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(m.machineName)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(site?site.name:"—")+' · '+esc(m.date)+' · '+inr(m.totalCost)+'</span></div><div style="display:flex;align-items:center;gap:8px;">'+stampHtml(m.status)+(m.status==="pending"?'<button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markMachineryPaid(\''+m.id+'\')">✓</button>':'')+'<button class="icon-btn" onclick="deleteMachinery(\''+m.id+'\')">🗑</button></div></div>'; });
+  let rows=''; state.machinery.forEach(m=>{ const site=state.sites.find(s=>s.id===m.siteId); rows+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(m.machineName)+'</span> <span style="font-size:11.5px;color:var(--sub);">· '+esc(site?site.name:"—")+' · '+esc(m.date)+' · '+inr(m.totalCost)+'</span></div><div style="display:flex;align-items:center;gap:8px;">'+stampHtml(m.status)+'<button class="icon-btn" title="toggle" style="color:var(--steel);font-weight:700;" onclick="markMachineryPaid(\''+m.id+'\')">⇄</button>'+'<button class="icon-btn" onclick="deleteMachinery(\''+m.id+'\')">🗑</button></div></div>'; });
   const pendingTotal = state.machinery.filter(m=>m.status==="pending").reduce((a,m)=>a+m.totalCost,0);
   const stat = pendingTotal>0 ? '<div class="stat-row" style="margin-bottom:16px;">'+statCard(LANG==="en"?"Pending":"पेंडिंग", inr(pendingTotal), "--red", "⚠")+'</div>' : '';
   return stat + sectionHtml(t("reportMach"),"", rows?'<div class="list-panel">'+rows+'</div>':'<div class="empty-note">'+(LANG==="en"?"No entries yet.":"अजून नोंद नाही.")+'</div>');
 }
 function reportLabor(){
-  let rows=''; state.labor.forEach(l=>{ const site=state.sites.find(s=>s.id===l.siteId); rows+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(l.workerName)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(l.category?'· '+esc(l.category)+' ':'')+'· '+esc(site?site.name:"—")+' · '+esc(l.date)+' · '+l.days+'d · '+inr(l.wageAmount)+'</span></div><div style="display:flex;align-items:center;gap:8px;">'+stampHtml(l.status)+(l.status==="pending"?'<button class="icon-btn" style="color:var(--green);font-weight:700;" onclick="markLaborPaid(\''+l.id+'\')">✓</button>':'')+'<button class="icon-btn" onclick="deleteLabor(\''+l.id+'\')">🗑</button></div></div>'; });
+  let rows=''; state.labor.forEach(l=>{ const site=state.sites.find(s=>s.id===l.siteId); rows+='<div class="list-row"><div><span style="font-weight:600;font-size:13px;">'+esc(l.workerName)+'</span> <span style="font-size:11.5px;color:var(--sub);">'+(l.category?'· '+esc(l.category)+' ':'')+'· '+esc(site?site.name:"—")+' · '+esc(l.date)+' · '+l.days+'d · '+inr(l.wageAmount)+'</span></div><div style="display:flex;align-items:center;gap:8px;">'+stampHtml(l.status)+'<button class="icon-btn" title="toggle" style="color:var(--steel);font-weight:700;" onclick="markLaborPaid(\''+l.id+'\')">⇄</button>'+'<button class="icon-btn" onclick="deleteLabor(\''+l.id+'\')">🗑</button></div></div>'; });
   const pendingTotal = state.labor.filter(l=>l.status==="pending").reduce((a,l)=>a+l.wageAmount,0);
   const stat = pendingTotal>0 ? '<div class="stat-row" style="margin-bottom:16px;">'+statCard(LANG==="en"?"Unpaid wages":"न दिलेली मजुरी", inr(pendingTotal), "--red", "⚠")+'</div>' : '';
   return stat + sectionHtml(t("reportLabor"),"", rows?'<div class="list-panel">'+rows+'</div>':'<div class="empty-note">'+(LANG==="en"?"No entries yet.":"अजून नोंद नाही.")+'</div>');
