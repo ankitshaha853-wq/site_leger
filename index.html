@@ -1340,16 +1340,29 @@ function contractorTotals(){
     const workIds = state.workItems.filter(w=>w.contractorId===c.id).map(w=>w.id);
     const raAmt = state.raBills.filter(b=>workIds.includes(b.workItemId)).reduce((a,b)=>a+b.netPayable,0);
     const advAmt = state.advances.filter(a=>a.contractorId===c.id).reduce((a,x)=>a+x.amount,0);
-    return { contractor:c, amount: directAmt+raAmt, advance:advAmt, count: directTxns.length + state.raBills.filter(b=>workIds.includes(b.workItemId)).length };
+    const pendingAmt = directTxns.filter(x=>x.status==="pending").reduce((a,x)=>a+x.totalAmount,0)
+                      + state.raBills.filter(b=>workIds.includes(b.workItemId) && b.status==="pending").reduce((a,b)=>a+b.netPayable,0);
+    return { contractor:c, amount: directAmt+raAmt, advance:advAmt, pending:pendingAmt, netDue: pendingAmt-advAmt, count: directTxns.length + state.raBills.filter(b=>workIds.includes(b.workItemId)).length };
   }).sort((a,b)=>b.amount-a.amount);
 }
 function reportContractorsList(){
   if (state.contractors.length===0) return '<div class="empty-note">'+(LANG==="en"?"No contractors yet — add under Masters.":'अजून कॉन्ट्रॅक्टर नाही — "मास्टर्स" मध्ये जोडा.')+'</div>';
   const totals = contractorTotals();
   let inner='<div class="grid-cards">';
-  totals.forEach(tt=>{ inner += '<div class="card" onclick="openReportContractor(\''+tt.contractor.id+'\')"><div class="card-title">'+esc(tt.contractor.name)+'</div><div class="card-sub">'+esc(tt.contractor.workType||"")+'</div><div class="card-amount" style="color:var(--orange);">'+inr(tt.amount)+'</div><div class="card-count">'+tt.count+' '+(LANG==="en"?"entries (all sites)":"नोंदी (सर्व साईट)")+(tt.advance>0?' · '+(LANG==="en"?"advance":"ॲडव्हान्स")+' '+inr(tt.advance):'')+'</div></div>'; });
+  totals.forEach(tt=>{
+    inner += '<div class="card" onclick="openReportContractor(\''+tt.contractor.id+'\')"><div class="card-title">'+esc(tt.contractor.name)+'</div><div class="card-sub">'+esc(tt.contractor.workType||"")+'</div>'
+      + netDueLineHtml(tt.netDue)
+      + '<div class="card-count" style="margin-top:6px;">'+(LANG==="en"?"Total billed: ":"एकूण बिल: ")+inr(tt.amount)+' · '+tt.count+' '+(LANG==="en"?"entries":"नोंदी")+'</div>'
+      + (tt.advance>0?'<div style="font-size:11px;color:var(--steel);">🤝 '+(LANG==="en"?"Advance given: ":"ॲडव्हान्स दिला: ")+inr(tt.advance)+'</div>':'')
+      + '</div>';
+  });
   inner+='</div>';
   return sectionHtml(t("reportContractors"),"", inner);
+}
+function netDueLineHtml(netDue){
+  if (netDue > 0) return '<div class="card-amount" style="color:var(--red);">'+(LANG==="en"?"Due: ":"बाकी: ")+inr(netDue)+'</div>';
+  if (netDue < 0) return '<div class="card-amount" style="color:var(--green);">'+(LANG==="en"?"Credit: ":"शिल्लक क्रेडिट: ")+inr(-netDue)+'</div>';
+  return '<div class="card-amount" style="color:var(--sub);font-size:15px;">'+(LANG==="en"?"Clear ✓":"क्लिअर ✓")+'</div>';
 }
 function openReportContractor(id){ state.activeContractorId=id; renderReports(); }
 function reportContractorDetail(contractorId){
@@ -1423,8 +1436,17 @@ function reportSuppliersList(){
   const totals = computeTotals();
   if (state.suppliers.length===0) return '<div class="empty-note">'+(LANG==="en"?"No suppliers yet.":"अजून सप्लायर नाही.")+'</div>';
   let inner='<div class="grid-cards">';
-  state.suppliers.forEach(s=>{ const tt=totals.perSupplier.find(p=>p.supplier.id===s.id)||{amount:0,count:0};
-    inner += '<div class="card" onclick="openReportSupplier(\''+s.id+'\')"><div class="card-title">'+esc(s.name)+'</div><div class="card-sub">'+esc(s.category)+(s.gstin?' · '+esc(s.gstin):'')+'</div><div class="card-amount" style="color:var(--orange);">'+inr(tt.amount)+'</div><div class="card-count">'+tt.count+' '+(LANG==="en"?"entries (all sites)":"नोंदी (सर्व साईट)")+'</div></div>'; });
+  state.suppliers.forEach(s=>{
+    const tt=totals.perSupplier.find(p=>p.supplier.id===s.id)||{amount:0,count:0};
+    const pending = state.txns.filter(x=>x.supplierId===s.id && x.status==="pending").reduce((a,x)=>a+x.totalAmount,0);
+    const adv = state.advances.filter(a=>a.partyType!=="contractor" && a.supplierId===s.id).reduce((a,x)=>a+x.amount,0);
+    const netDue = pending - adv;
+    inner += '<div class="card" onclick="openReportSupplier(\''+s.id+'\')"><div class="card-title">'+esc(s.name)+'</div><div class="card-sub">'+esc(s.category)+(s.gstin?' · '+esc(s.gstin):'')+'</div>'
+      + netDueLineHtml(netDue)
+      + '<div class="card-count" style="margin-top:6px;">'+(LANG==="en"?"Total billed: ":"एकूण बिल: ")+inr(tt.amount)+' · '+tt.count+' '+(LANG==="en"?"entries":"नोंदी")+'</div>'
+      + (adv>0?'<div style="font-size:11px;color:var(--steel);">🤝 '+(LANG==="en"?"Advance given: ":"ॲडव्हान्स दिला: ")+inr(adv)+'</div>':'')
+      + '</div>';
+  });
   inner+='</div>';
   return sectionHtml(t("reportSuppliers"),"", inner);
 }
